@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import configparser
-import argparse, csv, os, sys
+import argparse, configparser, csv, os, re, sys
 import math
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
@@ -26,31 +25,71 @@ class Config():
     drefDefines:List[str] = []
 
     def __init__(self, cliArgs:argparse.Namespace):
-        self.aircraft = cliArgs.aircraft
-        self.outPath = cliArgs.outputFolder
-
+        configFile = self.findConfigFile(cliArgs.config)
         self.config = configparser.RawConfigParser()
-        self.config.read(cliArgs.config)
+        self.config.read(configFile)
 
-        self.addDref('GndSpd', '{Speed}', 'sim/cockpit2/gauges/indicators/ground_speed_kt', '1.0')
+        defaults = self.config['Defaults'] if 'Defaults' in self.config else {}
+        if cliArgs.aircraft:
+            self.aircraft = cliArgs.aircraft
+        elif 'aircraft' in defaults:
+            self.aircraft = defaults['aircraft']
+        if cliArgs.outputFolder:
+            self.outPath = cliArgs.outputFolder
+        elif 'outpath' in defaults:
+            self.outPath = defaults['outpath']
+
+
+        self.addDref('sim/cockpit2/gauges/indicators/ground_speed_kt', '{Speed}', '1.0', 'GndSpd')
         if 'DREFS' in self.config.sections():
             drefs = self.config['DREFS']
             for dref in drefs:
-                self.addDref(dref, *[x.strip() for x in drefs[dref].split(',')])
+                self.addDref(dref, *[x.strip() for x in drefs[dref].rsplit(',', 3)])
 
+    def addDref(self, instrument:str, value:str, scale:str='1.0', name:str=None):
+        name = name or instrument.rpartition('/')[2][:FdrColumnWidth]
+        if name not in self.drefSources:
+            self.drefSources[name] = value
+            self.drefDefines.append(f'{instrument}\t{scale}\t\t// source: {value}')
 
-    def aircraftByTail(self, tail:str):
+    def acftByTail(self, tailNumber:str):
         for section in self.config.sections():
             if section.lower().startswith('aircraft/'):
                 aircraft = self.config[section]
-                if tail in [tail.strip() for tail in aircraft['Tails'].split(',')]:
+                if tailNumber in [tail.strip() for tail in aircraft['Tails'].split(',')]:
                     return section
 
+    def tail(self, tailNumber:str):
+        for section in self.config.sections():
+            if section.lower() == tailNumber.lower():
+                tailSection = self.config[section]
 
-    def addDref(self, name:str, value:str, paramPath:str, scale:str):
-        if name not in self.drefSources:
-            self.drefSources[name] = value
-            self.drefDefines.append(f'{paramPath}\t{scale}\t\t// type:{type} source:{value}')
+                tailConfig = {}
+                for key in self.config[section]:
+                    tailConfig[key] = numberOrString(tailSection[key])
+
+                if 'headingtrim' not in tailConfig:
+                    tailConfig['headingtrim'] = 0
+                if 'pitchtrim' not in tailConfig:
+                    tailConfig['pitchtrim'] = 0
+                if 'rolltrim' not in tailConfig:
+                    tailConfig['rolltrim'] = 0
+
+                return tailConfig
+
+    def findConfigFile(self, cliPath:str):
+        if cliPath:
+            return cliPath
+        
+        paths = ('.', os.path.dirname(os.path.abspath(__file__)))
+        files = ('42fdr.conf', '42fdr.ini')
+        for path in paths:
+            for file in files:
+                fullPath = os.path.join(path, file)
+                if Path(fullPath).is_file():
+                    return fullPath
+
+        return None
 
 
 class FdrTrackPoint():
@@ -114,10 +153,10 @@ class FlightMeta():
 
 
 def main(argv:List[str]):
-    parser = argparse.ArgumentParser(description='Convert ForeFlight compatible track files into X-Plane compatible FDR files.')
-    parser.add_argument('-a', '--aircraft', default='Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf', help='Path to write X-Plane compatible FDR v4 output file')
-    parser.add_argument('-c', '--config', default='./42fdr.conf', help='Path to 42fdr config file')
-    parser.add_argument('-o', '--outputFolder', default='.', help='Path to write X-Plane compatible FDR v4 output file')
+    parser = argparse.ArgumentParser(description='Convert ForeFlight compatible track files into X-Plane compatible FDR files')
+    parser.add_argument('-a', '--aircraft', default=None, help='Path to default X-Plane aircraft')
+    parser.add_argument('-c', '--config', default=None, help='Path to 42fdr config file')
+    parser.add_argument('-o', '--outputFolder', default=None, help='Path to write X-Plane compatible FDR v4 output file')
     parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV)')
     args = parser.parse_args()
     
@@ -230,6 +269,7 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
 
     fdrFlight.summary = flightSummary(flightMeta)
 
+    tailConfig = config.tail(fdrFlight.TAIL)
     trackCols = readCsvRow(csvReader)
     trackVals = readCsvRow(csvReader)
     while trackVals:
@@ -240,9 +280,9 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         fdrPoint.LAT = float(trackData['Latitude'])
         fdrPoint.LONG = float(trackData['Longitude'])
         fdrPoint.ALTMSL = float(trackData['Altitude'])
-        fdrPoint.HEADING = float(trackData['Course'])
-        fdrPoint.ROLL = float(trackData['Bank'])
-        fdrPoint.PITCH = float(trackData['Pitch'])
+        fdrPoint.HEADING = plusMinus180(float(trackData['Course']) + tailConfig['headingtrim'])
+        fdrPoint.PITCH = plusMinus180(float(trackData['Pitch']) + tailConfig['pitchtrim'])
+        fdrPoint.ROLL = plusMinus180(float(trackData['Bank']) + tailConfig['rolltrim'])
 
         for name in config.drefSources:
             value = config.drefSources[name]
@@ -301,7 +341,7 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrComment("Fields below define general data for this flight."),
         fdrComment("ForeFlight only provides a few of the data points that X-Plane can accept.") ,
         '\n',
-        f'ACFT, {config.aircraftByTail(fdrData.TAIL) or config.aircraft}\n',
+        f'ACFT, {config.acftByTail(fdrData.TAIL) or config.aircraft}\n',
         f'TAIL, {fdrData.TAIL}\n',
         f'DATE, {toMDY(fdrData.DATE)}\n',
         '\n\n',
@@ -313,11 +353,11 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrComment('The remainder of this file consists of GPS/AHRS track points.'),
         fdrComment('The timestamps beginning each row are in the same timezone as the original file.'),
         '\n',
-        fdrColNames(config.drefSources.values()),
+        fdrColNames(config.drefSources.keys()),
     ])
 
     for point in fdrData.track:
-        time    = toHMS(point.TIME)
+        time    = point.TIME.strftime('%H:%M:%S.%f')
         long    = str.rjust(str(point.LONG), FdrColumnWidth)
         lat     = str.rjust(str(point.LAT), FdrColumnWidth)
         altMSL  = str.rjust(str(point.ALTMSL), FdrColumnWidth)
@@ -341,13 +381,31 @@ def fdrDrefs(drefDefines:List[str]):
 
 
 def fdrColNames(drefNames:List[str]):
-    names = '''COMM,                 degrees,             degrees,              ft msl,                 deg,                 deg,                 deg
-COMM,               Longitude,            Latitude,              AltMSL,             Heading,               Pitch,                Roll'''
+    names = '''COMM,                        degrees,             degrees,              ft msl,                 deg,                 deg,                 deg
+COMM,                      Longitude,            Latitude,              AltMSL,             Heading,               Pitch,                Roll'''
 
     for drefName in drefNames:
         names += ', '+ str.rjust(drefName, FdrColumnWidth)
 
     return names +'\n'
+
+
+def numberOrString(numeric:str):
+    if re.sub('^-', '', re.sub('\\.', '', numeric)).isnumeric():
+        return float(numeric)
+    else:
+        return numeric
+
+
+def plusMinus180(degrees:float):
+    mod = 360 if degrees >= 0 else -360
+    degrees = degrees % mod
+    if degrees > 180:
+        return degrees - 360
+    elif degrees < -180:
+        return degrees + 360
+    else:
+        return degrees
 
 
 def getOutpath(config:Config, inPath:str, fdrData:FdrFlight):
