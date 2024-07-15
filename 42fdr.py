@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+import configparser
 import argparse, csv, os, sys
+import math
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, TextIO, Tuple, Union
+from typing import Dict, List, MutableMapping, TextIO, Tuple, Union
 
 
 FdrColumnWidth = 19
@@ -17,20 +19,38 @@ class FileType(Enum):
 
 
 class Config():
+    outPath:str = '.'
+    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf'
+    config:MutableMapping = None
     drefSources:Dict[str, str] = {}
     drefDefines:List[str] = []
-    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf'
-    outPath:str = '.'
 
     def __init__(self, cliArgs:argparse.Namespace):
         self.aircraft = cliArgs.aircraft
         self.outPath = cliArgs.outputFolder
-        self.addDref('Speed', 'GndSpd', 'sim/cockpit2/gauges/indicators/ground_speed_kt', '1.0')
 
-    def addDref(self, source:str, name:str, paramPath:str, scale:str):
-        if source not in self.drefSources:
-            self.drefSources[source] = name
-            self.drefDefines.append(f'{paramPath}\t{scale}\t\t// source:{source}')
+        self.config = configparser.RawConfigParser()
+        self.config.read(cliArgs.config)
+
+        self.addDref('GndSpd', '{Speed}', 'sim/cockpit2/gauges/indicators/ground_speed_kt', '1.0')
+        if 'DREFS' in self.config.sections():
+            drefs = self.config['DREFS']
+            for dref in drefs:
+                self.addDref(dref, *[x.strip() for x in drefs[dref].split(',')])
+
+
+    def aircraftByTail(self, tail:str):
+        for section in self.config.sections():
+            if section.lower().startswith('aircraft/'):
+                aircraft = self.config[section]
+                if tail in [tail.strip() for tail in aircraft['Tails'].split(',')]:
+                    return section
+
+
+    def addDref(self, name:str, value:str, paramPath:str, scale:str):
+        if name not in self.drefSources:
+            self.drefSources[name] = value
+            self.drefDefines.append(f'{paramPath}\t{scale}\t\t// type:{type} source:{value}')
 
 
 class FdrTrackPoint():
@@ -96,6 +116,7 @@ class FlightMeta():
 def main(argv:List[str]):
     parser = argparse.ArgumentParser(description='Convert ForeFlight compatible track files into X-Plane compatible FDR files.')
     parser.add_argument('-a', '--aircraft', default='Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf', help='Path to write X-Plane compatible FDR v4 output file')
+    parser.add_argument('-c', '--config', default='./42fdr.conf', help='Path to 42fdr config file')
     parser.add_argument('-o', '--outputFolder', default='.', help='Path to write X-Plane compatible FDR v4 output file')
     parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV)')
     args = parser.parse_args()
@@ -215,27 +236,19 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         fdrPoint = FdrTrackPoint()
         
         trackData = dict(zip(trackCols, trackVals))
-        for colName in trackData:
-            colValue = trackData[colName]
+        fdrPoint.TIME = datetime.fromtimestamp(float(trackData['Timestamp']));
+        fdrPoint.LAT = float(trackData['Latitude'])
+        fdrPoint.LONG = float(trackData['Longitude'])
+        fdrPoint.ALTMSL = float(trackData['Altitude'])
+        fdrPoint.HEADING = float(trackData['Course'])
+        fdrPoint.ROLL = float(trackData['Bank'])
+        fdrPoint.PITCH = float(trackData['Pitch'])
 
-            if colName == 'Timestamp':
-                fdrPoint.TIME = datetime.fromtimestamp(float(colValue));
-            elif colName == 'Latitude':
-                fdrPoint.LAT = float(colValue)
-            elif colName == 'Longitude':
-                fdrPoint.LONG = float(colValue)
-            elif colName == 'Altitude':
-                fdrPoint.ALTMSL = float(colValue)
-            elif colName == 'Course':
-                fdrPoint.HEADING = float(colValue)
-            elif colName == 'Bank':
-                fdrPoint.ROLL = float(colValue)
-            elif colName == 'Pitch':
-                fdrPoint.PITCH = float(colValue)
-            else:
-                for source in config.drefSources:
-                    if colName == source:
-                        fdrPoint.drefs[source] = float(colValue)
+        for name in config.drefSources:
+            value = config.drefSources[name]
+            meta = vars(flightMeta)
+            point = vars(fdrPoint)
+            fdrPoint.drefs[name] = eval(value.format(**meta, **point, **trackData))
 
         fdrFlight.track.append(fdrPoint)
         trackVals = readCsvRow(csvReader)
@@ -288,7 +301,7 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrComment("Fields below define general data for this flight."),
         fdrComment("ForeFlight only provides a few of the data points that X-Plane can accept.") ,
         '\n',
-        f'ACFT, {config.aircraft}\n',
+        f'ACFT, {config.aircraftByTail(fdrData.TAIL) or config.aircraft}\n',
         f'TAIL, {fdrData.TAIL}\n',
         f'DATE, {toMDY(fdrData.DATE)}\n',
         '\n\n',
@@ -307,11 +320,11 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         time    = toHMS(point.TIME)
         long    = str.rjust(str(point.LONG), FdrColumnWidth)
         lat     = str.rjust(str(point.LAT), FdrColumnWidth)
-        altMsl  = str.rjust(str(point.ALTMSL), FdrColumnWidth)
+        altMSL  = str.rjust(str(point.ALTMSL), FdrColumnWidth)
         heading = str.rjust(str(point.HEADING), FdrColumnWidth)
         pitch   = str.rjust(str(point.PITCH), FdrColumnWidth)
         roll    = str.rjust(str(point.ROLL), FdrColumnWidth)
-        fdrFile.write(f'{time}, {long}, {lat}, {altMsl}, {heading}, {pitch}, {roll}')
+        fdrFile.write(f'{time}, {long}, {lat}, {altMSL}, {heading}, {pitch}, {roll}')
 
         drefValues = []
         for dref in config.drefSources:
@@ -329,7 +342,7 @@ def fdrDrefs(drefDefines:List[str]):
 
 def fdrColNames(drefNames:List[str]):
     names = '''COMM,                 degrees,             degrees,              ft msl,                 deg,                 deg,                 deg
-COMM,               Longitude,            Latitude,              AltMSL,                 HDG,               Pitch,                Roll'''
+COMM,               Longitude,            Latitude,              AltMSL,             Heading,               Pitch,                Roll'''
 
     for drefName in drefNames:
         names += ', '+ str.rjust(drefName, FdrColumnWidth)
