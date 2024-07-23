@@ -9,7 +9,7 @@ sim/cockpit2/gauges/indicators/altitude_ft_pilot = {ALTMSL}, 1.0, Alt
 sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0
 
 
-[Aircraft/PIPERS_1150/Piper_PA-28-161/Piper_PA-28-161(Garmin)]
+[Aircraft/PIPERS_1150/Piper_PA-28-161/Piper_PA-28-161(Garmin)/piper warrior.acf]
 Tails = N222ND, N238ND, N239ND, N263ND, N267ND, N276ND, N291MK
 
 
