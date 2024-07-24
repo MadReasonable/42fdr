@@ -97,13 +97,13 @@ rollTrim    = 0.0
 
 
 #### DREF Field Reference:
-**CSV track data contains the raw values from the input file.
+**CSV Track data contains the raw values from the input file.
 After converting the timestamp to a normal date and time, and
 calibrating the attitude, the processed data is made available
-as FDR track data*
+as FDR Track data*
 
-***Speed is not available in FDR Flight data as it is
-technically a DREF value and not part of the core FDR file*
+***Speed is not available in FDR Track data as it is technically
+a DREF value and not part of the core FDR file*
 | Track (CSV) | Track (FDR) | Flight (meta)            |
 |-------------|-------------|--------------------------|
 | {Timestamp} | {TIME}      | {Pilot}                  |
