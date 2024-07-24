@@ -26,12 +26,12 @@ Specify a config file with the `-c` parameter.
 
 ## Using a config file
 Config files are optional.
-They can be used to avoid passing long parameters on the command line, to compute additional columns for replay, to automatically load the correct X-Plane model for a tail number, and to correct for heading/pitch/roll deviations in specific aircraft.
+They can be used to avoid passing long parameters on the command line, to compute additional columns for replay, to automatically load the correct X-Plane model for the recorded tail number, and to correct for heading/pitch/roll deviations in specific aircraft.
 
-42fdr.py will automatically search for a config file named either 42fdr.conf or 42fdr.ini in the directory you run 42fdr.py from and then in the folder where 42fdr.py lives.
-You can specify a custom config file from the command line.
+42fdr will automatically search for a config file named either 42fdr.conf or 42fdr.ini, first in the folder from where you run 42fdr.py and then in the folder where 42fdr.py lives.
+You can also specify a custom config file location from the command line.
 
-An example config file is provided with the name `42fdr.conf.example`.
+An example configuration is provided with the name `42fdr.conf.example`.
 Make a copy or rename it, then edit it as needed.
 One `[Defaults]` section, one `[DREFS]` section, and as many `[<Aircraft/*>]` and `[<Tail>]` sections as needed are supported.
 
@@ -43,7 +43,7 @@ The `Defaults` section supports two keys, `aircraft` and `outpath`, which provid
 ### [DREFS]
 The `DREFS` section allows you to add additional fields to the output FDR file.
 
-ForeFlight only provides basic position, attitude, and ground speed.  This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values (e.g. `29.92`) and to compute new values `(e.g. math.cos({Course} / 180 * math.pi))`.
+ForeFlight only provides basic position, attitude, and ground speed.  This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)` and to compute new values `(e.g. math.cos({Course} / 180 * math.pi))`.
 
 Add a key for each column you would like to add using the following syntax:
 ```
@@ -60,7 +60,7 @@ A field reference is provided at the end of this section, after the example conf
 
 ### [<Aircraft/*>]
 `<Aircraft/*>` sections allows you to map specific tail numbers to X-Plane aircraft models.
-The section name should be the path to the .acf model file, beginning with the Aircraft folder (e.g. `[Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf]`)
+The section name should be the path to the .acf model file, beginning with the Aircraft folder `(e.g. [Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf])`
 
 A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`.
 
@@ -85,7 +85,7 @@ sim/cockpit2/gauges/indicators/altitude_ft_pilot = {ALTMSL}, 1.0, Alt
 sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0
 
 
-[Aircraft/PIPERS_1150/Piper_PA-28-161/Piper_PA-28-161(Garmin)]
+[Aircraft/PIPERS_1150/Piper_PA-28-161/Piper_PA-28-161(Garmin)/piper warrior.acf]
 Tails = N222ND, N238ND, N239ND, N263ND, N267ND, N276ND, N291MK
 
 
@@ -97,35 +97,42 @@ rollTrim    = 0.0
 
 
 #### DREF Field Reference:
-| Track (CSV) | Flight (FDR) | Flight (meta)            |
-|-------------|--------------|--------------------------|
-| {Timestamp} | {TIME}       | {Pilot}                  |
-| {Latitude}  | {LAT}        | {TailNumber}             |
-| {Longitude} | {LONG}       | {DerivedOrigin}          |
-| {Altitude}  | {ALTMSL}     | {StartLatitude}          |
-| {Course}    | {HEADING}    | {StartLongitude}         |
-| {Speed}     | {PITCH}      | {DerivedDestination}     |
-| {Bank}      | {ROLL}       | {EndLatitude}            |
-| {Pitch}     |              | {EndLongitude}           |
-|             |              | {StartTime}              |
-|             |              | {EndTime}                |
-|             |              | {TotalDuration}          |
-|             |              | {TotalDistance}          |
-|             |              | {InitialAttitudeSource}  |
-|             |              | {DeviceModel}            |
-|             |              | {DeviceModelDetailed}    |
-|             |              | {iOSVersion}             |
-|             |              | {BatteryLevel}           |
-|             |              | {BatteryState}           |
-|             |              | {GPSSource}              |
-|             |              | {MaximumVerticalError}   |
-|             |              | {MinimumVerticalError}   |
-|             |              | {AverageVerticalError}   |
-|             |              | {MaximumHorizontalError} |
-|             |              | {MinimumHorizontalError} |
-|             |              | {AverageHorizontalError} |
-|             |              | {ImportedFrom}           |
-|             |              | {RouteWaypoints}         |
+**CSV track data contains the raw values from the input file.
+After converting the timestamp to a normal date and time, and
+calibrating the attitude, the processed data is made available
+as FDR track data*
+
+***Speed is not available in FDR Flight data as it is
+technically a DREF value and not part of the core FDR file*
+| Track (CSV) | Track (FDR) | Flight (meta)            |
+|-------------|-------------|--------------------------|
+| {Timestamp} | {TIME}      | {Pilot}                  |
+| {Latitude}  | {LAT}       | {TailNumber}             |
+| {Longitude} | {LONG}      | {DerivedOrigin}          |
+| {Altitude}  | {ALTMSL}    | {StartLatitude}          |
+| {Course}    | {HEADING}   | {StartLongitude}         |
+| {Pitch}     | {PITCH}     | {DerivedDestination}     |
+| {Bank}      | {ROLL}      | {EndLatitude}            |
+| {Speed}     |             | {EndLongitude}           |
+|             |             | {StartTime}              |
+|             |             | {EndTime}                |
+|             |             | {TotalDuration}          |
+|             |             | {TotalDistance}          |
+|             |             | {InitialAttitudeSource}  |
+|             |             | {DeviceModel}            |
+|             |             | {DeviceModelDetailed}    |
+|             |             | {iOSVersion}             |
+|             |             | {BatteryLevel}           |
+|             |             | {BatteryState}           |
+|             |             | {GPSSource}              |
+|             |             | {MaximumVerticalError}   |
+|             |             | {MinimumVerticalError}   |
+|             |             | {AverageVerticalError}   |
+|             |             | {MaximumHorizontalError} |
+|             |             | {MinimumHorizontalError} |
+|             |             | {AverageHorizontalError} |
+|             |             | {ImportedFrom}           |
+|             |             | {RouteWaypoints}         |
 
 
 ## Command-line Examples
