@@ -11,17 +11,19 @@ Just put 42fdr.py somewhere on your computer.
 
 
 ## Usage
-`[python3] 42fdr.py [-c configFile ] [-a Aircraft] [-o outputFolder] trackFile1 [trackFile2, trackFile3, ...]`
+`[python3] 42fdr.py [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] trackFile1 [trackFile2, trackFile3, ...]`
 
-You should be able to run 42fdr without explicitly invoking the python interpreter.
-It will convert one or more files, rename it with the `.fdr` extension, and save the output to the current working directory.
-Choose a different output path with the `-o` parameter.
+**You should be able to run 42fdr without explicitly invoking the python interpreter.*
 
-X-Plane requires the FDR file to specify an aircraft model for the flight and this is not provided by the ForeFlight track file.
-`Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf` will be used by default. 
-Choose a different aircraft with the `-a` parameter.
+42FDR will convert one or more files, rename it with the `.fdr` extension, and save the output to the current working directory.
 
-Specify a config file with the `-c` parameter. 
+| Options | Description |
+|---------|-------------|
+| `-c`    | Specify a config file.  A config file can be used to set the options below instead of on the command-line.  A config file can also define custom DREFs, automatically lookup an X-Plane aircraft by tail number, and load tail specific attitude calibrations.
+| `-a`    | Choose an X-Plane aircraft.  X-Plane requires the FDR file to specify an aircraft model for the flight and this is not provided by the ForeFlight track file.  `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf` is used by default unless overriden with a config file or command line option.
+| `-t`    | Adjust all times by this (positive or negative) amount.  Can be expressed as a decimal number of hours `(e.g. 3.5)` or in the format hh:mm[:ss] `(e.g. -5:00)`
+| `-o`    | Choose a different output path.
+
 
 
 ## Using a config file
@@ -37,7 +39,7 @@ One `[Defaults]` section, one `[DREFS]` section, and as many `[<Aircraft/*>]` an
 
 
 ### [Defaults]
-The `Defaults` section supports two keys, `aircraft` and `outpath`, which provide defaults for when their respective command-line arguments are not provided.
+The `Defaults` section supports three keys, `aircraft`, `timezone`, and `outpath`, which provide defaults for when their respective command-line arguments are not provided.
 
 
 ### [DREFS]
@@ -98,22 +100,22 @@ rollTrim    = 0.0
 
 #### DREF Field Reference:
 **CSV Track data contains the raw values from the input file.
-After converting the timestamp to a normal date and time, and
-calibrating the attitude, the processed data is made available
-as FDR Track data*
+After converting the timestamp to a normal date and time,
+adjusting for timezone, and calibrating the attitude,
+the processed data is made available as FDR Track data*
 
-***Speed is not available in FDR Track data as it is technically
+***GndSpd is not available in FDR Track data as it is technically
 a DREF value and not part of the core FDR file*
-| Track (CSV) | Track (FDR) | Flight (meta)            |
+| Track (FDR) | Track (CSV) | Flight (meta)            |
 |-------------|-------------|--------------------------|
-| {Timestamp} | {TIME}      | {Pilot}                  |
-| {Latitude}  | {LAT}       | {TailNumber}             |
-| {Longitude} | {LONG}      | {DerivedOrigin}          |
-| {Altitude}  | {ALTMSL}    | {StartLatitude}          |
-| {Course}    | {HEADING}   | {StartLongitude}         |
-| {Pitch}     | {PITCH}     | {DerivedDestination}     |
-| {Bank}      | {ROLL}      | {EndLatitude}            |
-| {Speed}     |             | {EndLongitude}           |
+| {TIME}      | {Timestamp} | {Pilot}                  |
+| {LAT}       | {Latitude}  | {TailNumber}             |
+| {LONG}      | {Longitude} | {DerivedOrigin}          |
+| {ALTMSL}    | {Altitude}  | {StartLatitude}          |
+| {HEADING}   | {Course}    | {StartLongitude}         |
+| {PITCH}     | {Pitch}     | {DerivedDestination}     |
+| {ROLL}      | {Bank}      | {EndLatitude}            |
+|             | {Speed}     | {EndLongitude}           |
 |             |             | {StartTime}              |
 |             |             | {EndTime}                |
 |             |             | {TotalDuration}          |
