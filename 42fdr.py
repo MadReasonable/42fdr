@@ -19,7 +19,7 @@ class FileType(Enum):
 class Config():
     outPath:str = '.'
     timezone:int = 0
-    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf'
+    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf'
 
     file:MutableMapping = None
     drefSources:Dict[str, str] = {}

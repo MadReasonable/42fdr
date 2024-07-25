@@ -20,7 +20,7 @@ Just put 42fdr.py somewhere on your computer.
 | Options | Description |
 |---------|-------------|
 | `-c`    | Specify a config file.  A config file can be used to set the options below instead of on the command-line.  A config file can also define custom DREFs, automatically lookup an X-Plane aircraft by tail number, and load tail specific attitude calibrations.
-| `-a`    | Choose an X-Plane aircraft.  X-Plane requires the FDR file to specify an aircraft model for the flight and this is not provided by the ForeFlight track file.  `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf` is used by default unless overriden with a config file or command line option.
+| `-a`    | Choose an X-Plane aircraft.  X-Plane requires the FDR file to specify an aircraft model for the flight and this is not provided by the ForeFlight track file.  `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf` is used by default unless overriden with a config file or command line option.
 | `-t`    | Adjust all times by this (positive or negative) amount.  Can be expressed as a decimal number of hours `(e.g. 3.5)` or in the format hh:mm[:ss] `(e.g. -5:00)`
 | `-o`    | Choose a different output path.
 
@@ -62,7 +62,7 @@ A field reference is provided at the end of this section, after the example conf
 
 ### [<Aircraft/*>]
 `<Aircraft/*>` sections allows you to map specific tail numbers to X-Plane aircraft models.
-The section name should be the path to the .acf model file, beginning with the Aircraft folder `(e.g. [Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf])`
+The section name should be the path to the .acf model file, beginning with the Aircraft folder `(e.g. [Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf])`
 
 A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`.
 
@@ -77,7 +77,7 @@ These sections supports three keys (`headingTrim`, `pitchTrim`, `rollTrim`) and 
 #### 42fdr.conf example:
 ```
 [Defaults]
-Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf
+Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
 OutPath  = .
 
 
