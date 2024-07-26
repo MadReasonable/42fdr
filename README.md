@@ -21,7 +21,7 @@ Just put 42fdr.py somewhere on your computer.
 |---------|-------------|
 | `-c`    | Specify a config file.  A config file can be used to set the options below instead of on the command-line.  A config file can also define custom DREFs, automatically lookup an X-Plane aircraft by tail number, and load tail specific attitude calibrations.
 | `-a`    | Choose an X-Plane aircraft.  X-Plane requires the FDR file to specify an aircraft model for the flight and this is not provided by the ForeFlight track file.  `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf` is used by default unless overriden with a config file or command line option.
-| `-t`    | Adjust all times by this (positive or negative) amount.  Can be expressed as a decimal number of hours `(e.g. 3.5)` or in the format hh:mm[:ss] `(e.g. -5:00)`
+| `-t`    | Adjust all times by this (positive or negative) amount.  If you've recorded your flight in local time, this value should be the *opposite* of your actual timezone. It will be added to recorded timestamps to get Zulu time.  Can be expressed as a decimal number of hours `(e.g. 3.5)` or in the format +/-hh:mm[:ss] `(e.g. -5:00)`
 | `-o`    | Choose a different output path.
 
 

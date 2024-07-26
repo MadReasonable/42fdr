@@ -1,5 +1,6 @@
 [Defaults]
 Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
+Timezone = 5
 OutPath  = .
 
 
