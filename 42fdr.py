@@ -26,9 +26,10 @@ class Config():
     drefDefines:List[str] = []
 
     def __init__(self, cliArgs:argparse.Namespace):
-        configFile = self.findConfigFile(cliArgs.config)
         self.file = configparser.RawConfigParser()
-        self.file.read(configFile)
+        configFile = self.findConfigFile(cliArgs.config)
+        if configFile:
+            self.file.read(configFile)
 
         defaults = self.file['Defaults'] if 'Defaults' in self.file else {}
 
@@ -68,22 +69,22 @@ class Config():
                     return section
 
     def tail(self, tailNumber:str):
+        tailConfig = {}
         for section in self.file.sections():
             if section.lower() == tailNumber.lower():
                 tailSection = self.file[section]
-
-                tailConfig = {}
                 for key in self.file[section]:
                     tailConfig[key] = numberOrString(tailSection[key])
+                break
 
-                if 'headingtrim' not in tailConfig:
-                    tailConfig['headingtrim'] = 0
-                if 'pitchtrim' not in tailConfig:
-                    tailConfig['pitchtrim'] = 0
-                if 'rolltrim' not in tailConfig:
-                    tailConfig['rolltrim'] = 0
+        if 'headingtrim' not in tailConfig:
+            tailConfig['headingtrim'] = 0
+        if 'pitchtrim' not in tailConfig:
+            tailConfig['pitchtrim'] = 0
+        if 'rolltrim' not in tailConfig:
+            tailConfig['rolltrim'] = 0
 
-                return tailConfig
+        return tailConfig
 
     def findConfigFile(self, cliPath:str):
         if cliPath:
