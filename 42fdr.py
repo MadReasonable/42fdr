@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-import argparse, configparser, csv, os, re, sys
-import math
-import xml.etree.ElementTree as ET
+import argparse, configparser, csv, os, re, sys, xml.etree.ElementTree as ET
+import math  # Used when evaluating user DREF value expressions
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -19,21 +18,30 @@ class FileType(Enum):
 
 class Config():
     outPath:str = '.'
-    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP_G1000.acf'
-    config:MutableMapping = None
+    timezone:int = 0
+    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf'
+
+    file:MutableMapping = None
     drefSources:Dict[str, str] = {}
     drefDefines:List[str] = []
 
     def __init__(self, cliArgs:argparse.Namespace):
         configFile = self.findConfigFile(cliArgs.config)
-        self.config = configparser.RawConfigParser()
-        self.config.read(configFile)
+        self.file = configparser.RawConfigParser()
+        self.file.read(configFile)
 
-        defaults = self.config['Defaults'] if 'Defaults' in self.config else {}
+        defaults = self.file['Defaults'] if 'Defaults' in self.file else {}
+
         if cliArgs.aircraft:
             self.aircraft = cliArgs.aircraft
         elif 'aircraft' in defaults:
             self.aircraft = defaults['aircraft']
+
+        if cliArgs.timezone:
+            self.timezone = secondsFromString(cliArgs.timezone)
+        elif 'timezone' in defaults:
+            self.timezone = secondsFromString(defaults['timezone'])
+
         if cliArgs.outputFolder:
             self.outPath = cliArgs.outputFolder
         elif 'outpath' in defaults:
@@ -41,8 +49,8 @@ class Config():
 
 
         self.addDref('sim/cockpit2/gauges/indicators/ground_speed_kt', '{Speed}', '1.0', 'GndSpd')
-        if 'DREFS' in self.config.sections():
-            drefs = self.config['DREFS']
+        if 'DREFS' in self.file.sections():
+            drefs = self.file['DREFS']
             for dref in drefs:
                 self.addDref(dref, *[x.strip() for x in drefs[dref].rsplit(',', 3)])
 
@@ -53,19 +61,19 @@ class Config():
             self.drefDefines.append(f'{instrument}\t{scale}\t\t// source: {value}')
 
     def acftByTail(self, tailNumber:str):
-        for section in self.config.sections():
+        for section in self.file.sections():
             if section.lower().startswith('aircraft/'):
-                aircraft = self.config[section]
+                aircraft = self.file[section]
                 if tailNumber in [tail.strip() for tail in aircraft['Tails'].split(',')]:
                     return section
 
     def tail(self, tailNumber:str):
-        for section in self.config.sections():
+        for section in self.file.sections():
             if section.lower() == tailNumber.lower():
-                tailSection = self.config[section]
+                tailSection = self.file[section]
 
                 tailConfig = {}
-                for key in self.config[section]:
+                for key in self.file[section]:
                     tailConfig[key] = numberOrString(tailSection[key])
 
                 if 'headingtrim' not in tailConfig:
@@ -156,6 +164,7 @@ def main(argv:List[str]):
     parser = argparse.ArgumentParser(description='Convert ForeFlight compatible track files into X-Plane compatible FDR files')
     parser.add_argument('-a', '--aircraft', default=None, help='Path to default X-Plane aircraft')
     parser.add_argument('-c', '--config', default=None, help='Path to 42fdr config file')
+    parser.add_argument('-t', '--timezone', default=None, help='An offset to add to all times processed.  +/-hh:mm[:ss] or +/-<decimal hours>')
     parser.add_argument('-o', '--outputFolder', default=None, help='Path to write X-Plane compatible FDR v4 output file')
     parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV)')
     args = parser.parse_args()
@@ -229,9 +238,9 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         elif colName == 'End Longitude':
             flightMeta.EndLongitude = float(colValue)
         elif colName == 'Start Time':
-            flightMeta.StartTime = datetime.fromtimestamp(float(colValue) / 1000)
+            flightMeta.StartTime = datetime.fromtimestamp(float(colValue) / 1000 + config.timezone)
         elif colName == 'End Time':
-            flightMeta.EndTime = datetime.fromtimestamp(float(colValue) / 1000)
+            flightMeta.EndTime = datetime.fromtimestamp(float(colValue) / 1000 + config.timezone)
         elif colName == 'Total Duration':
             flightMeta.TotalDuration = timedelta(seconds=float(colValue))
         elif colName == 'Total Distance':
@@ -276,7 +285,7 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         fdrPoint = FdrTrackPoint()
         
         trackData = dict(zip(trackCols, trackVals))
-        fdrPoint.TIME = datetime.fromtimestamp(float(trackData['Timestamp']));
+        fdrPoint.TIME = datetime.fromtimestamp(float(trackData['Timestamp']) + config.timezone)
         fdrPoint.LAT = float(trackData['Latitude'])
         fdrPoint.LONG = float(trackData['Longitude'])
         fdrPoint.ALTMSL = float(trackData['Altitude'])
@@ -390,8 +399,36 @@ COMM,                      Longitude,            Latitude,              AltMSL, 
     return names +'\n'
 
 
+def getOutpath(config:Config, inPath:str, fdrData:FdrFlight):
+    filename = os.path.basename(inPath)
+    outPath = config.outPath or '.'
+    return Path(os.path.join(outPath, filename)).with_suffix('.fdr')
+
+
+def secondsFromString(timezone:str):
+    seconds = 0
+
+    timezone = numberOrString(timezone)
+    if isinstance(timezone, (float, int)):
+        seconds = timezone * 3600
+    elif isinstance(timezone, str):
+        indexAfterSign = int(timezone[0] in ['+','-'])
+        zone = timezone[indexAfterSign:].split(':')
+
+        seconds = float(zone.pop())
+        seconds += float(zone.pop()) * 60
+        if len(zone):
+            seconds += float(zone.pop()) * 3600
+        else:
+            seconds *= 60
+
+        seconds *= -1 if timezone[0] == '-' else 1
+
+    return seconds
+
+
 def numberOrString(numeric:str):
-    if re.sub('^-', '', re.sub('\\.', '', numeric)).isnumeric():
+    if re.sub('^[+-]', '', re.sub('\\.', '', numeric)).isnumeric():
         return float(numeric)
     else:
         return numeric
@@ -406,12 +443,6 @@ def plusMinus180(degrees:float):
         return degrees + 360
     else:
         return degrees
-
-
-def getOutpath(config:Config, inPath:str, fdrData:FdrFlight):
-    filename = os.path.basename(inPath)
-    outPath = config.outPath or '.'
-    return Path(os.path.join(outPath, filename)).with_suffix('.fdr')
 
 
 def toMDY(time:Union[datetime,int,str]):
