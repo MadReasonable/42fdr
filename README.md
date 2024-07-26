@@ -78,13 +78,18 @@ These sections supports three keys (`headingTrim`, `pitchTrim`, `rollTrim`) and 
 ```
 [Defaults]
 Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
+Timezone = 5
 OutPath  = .
 
 
 [DREFS]
 sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
-sim/cockpit2/gauges/indicators/altitude_ft_pilot = {ALTMSL}, 1.0, Alt
-sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0
+sim/cockpit2/gauges/indicators/altitude_ft_pilot = {ALTMSL}, 1.0, Altimeter
+sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, Barometer
+sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, 1.0, Compass
+sim/cockpit2/gauges/indicators/heading_vacuum_deg_mag_pilot = {HEADING}, 1.0, Vacuum Heading
+sim/cockpit2/gauges/indicators/pitch_vacuum_deg_pilot = {PITCH}, 1.0, Vacuum Pitch
+sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = {ROLL}, 1.0, Vacuum Roll
 
 
 [Aircraft/PIPERS_1150/Piper_PA-28-161/Piper_PA-28-161(Garmin)/piper warrior.acf]
