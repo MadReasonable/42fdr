@@ -22,8 +22,6 @@ class Config():
     aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf'
 
     file:MutableMapping = None
-    drefSources:Dict[str, str] = {}
-    drefDefines:List[str] = []
 
     def __init__(self, cliArgs:argparse.Namespace):
         self.file = configparser.RawConfigParser()
@@ -48,25 +46,38 @@ class Config():
         elif 'outpath' in defaults:
             self.outPath = defaults['outpath']
 
-
-        self.addDref('sim/cockpit2/gauges/indicators/ground_speed_kt', '{Speed}', '1.0', 'GndSpd')
-        if 'DREFS' in self.file.sections():
-            drefs = self.file['DREFS']
-            for dref in drefs:
-                self.addDref(dref, *[x.strip() for x in drefs[dref].rsplit(',', 3)])
-
-    def addDref(self, instrument:str, value:str, scale:str='1.0', name:str=None):
-        name = name or instrument.rpartition('/')[2][:FdrColumnWidth]
-        if name not in self.drefSources:
-            self.drefSources[name] = value
-            self.drefDefines.append(f'{instrument}\t{scale}\t\t// source: {value}')
-
     def acftByTail(self, tailNumber:str):
         for section in self.file.sections():
             if section.lower().startswith('aircraft/'):
                 aircraft = self.file[section]
                 if tailNumber in [tail.strip() for tail in aircraft['Tails'].split(',')]:
                     return section
+
+    def drefsByTail(self, tailNumber: str) -> Tuple[Dict[str, str], List[str]]:
+        sources: Dict[str, str] = {}
+        defines: List[str] = []
+
+        def add(instrument: str, value: str, scale: str = '1.0', name: str = None):
+            name = name or instrument.rpartition('/')[2][:FdrColumnWidth]
+            sources[name] = value
+            defines.append(f'{instrument}\t{scale}\t\t// source: {value}')
+
+        def fromSection(sectionName: str):
+            if sectionName and sectionName in self.file:
+                for key, val in self.file[sectionName].items():
+                    if key.lower().startswith('dref '):
+                        instrument = key[5:].strip()
+                        parts = [x.strip() for x in val.rsplit(',', 3)]
+                        add(instrument, *parts)
+
+        # Always include the default ground speed DREF
+        add('sim/cockpit2/gauges/indicators/ground_speed_kt', '{Speed}', '1.0', 'GndSpd')
+
+        fromSection('Defaults')
+        fromSection(self.acftByTail(tailNumber))
+        fromSection(tailNumber)
+
+        return sources, defines
 
     def tail(self, tailNumber:str):
         tailConfig = {}
@@ -279,6 +290,7 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
 
     fdrFlight.summary = flightSummary(flightMeta)
 
+    drefSources, _ = config.drefsByTail(fdrFlight.TAIL)
     tailConfig = config.tail(fdrFlight.TAIL)
     trackCols = readCsvRow(csvReader)
     trackVals = readCsvRow(csvReader)
@@ -294,8 +306,8 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         fdrPoint.PITCH = plusMinus180(float(trackData['Pitch']) + tailConfig['pitchtrim'])
         fdrPoint.ROLL = plusMinus180(float(trackData['Bank']) + tailConfig['rolltrim'])
 
-        for name in config.drefSources:
-            value = config.drefSources[name]
+        for name in drefSources:
+            value = drefSources[name]
             meta = vars(flightMeta)
             point = vars(fdrPoint)
             fdrPoint.drefs[name] = eval(value.format(**meta, **point, **trackData))
@@ -338,6 +350,7 @@ GPS/AHRS: {flightMeta.GPSSource}
 
 def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
     timestamp = datetime.now(timezone.utc).strftime('%Y/%m/%d %H:%M:%SZ')
+    drefSources, drefDefines = config.drefsByTail(fdrData.TAIL)
 
     fdrFile.writelines([
         'A\n4\n',
@@ -358,12 +371,12 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrComment('DREFs below (if any) define additional columns beyond the 7th (Roll)'),
         fdrComment('in the flight track data that follows.'),
         '\n',
-        fdrDrefs(config.drefDefines),
+        fdrDrefs(drefDefines),
         '\n\n',
         fdrComment('The remainder of this file consists of GPS/AHRS track points.'),
         fdrComment('The timestamps beginning each row are in the same timezone as the original file.'),
         '\n',
-        fdrColNames(config.drefSources.keys()),
+        fdrColNames(drefSources.keys()),
     ])
 
     for point in fdrData.track:
@@ -377,7 +390,7 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrFile.write(f'{time}, {long}, {lat}, {altMSL}, {heading}, {pitch}, {roll}')
 
         drefValues = []
-        for dref in config.drefSources:
+        for dref in drefSources:
             drefValues.append(str.rjust(str(point.drefs[dref]), FdrColumnWidth))
         fdrFile.write(', '+ ', '.join(drefValues) +'\n')
 
