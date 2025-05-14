@@ -31,10 +31,12 @@ class Config():
 
         defaults = self.file['Defaults'] if 'Defaults' in self.file else {}
 
+        self.cliAircraft = False
         if cliArgs.aircraft:
-            self.aircraft = cliArgs.aircraft
+            self.aircraft = cliArgs.aircraft.replace('\\', '/')
+            self.cliAircraft = True
         elif 'aircraft' in defaults:
-            self.aircraft = defaults['aircraft']
+            self.aircraft = defaults['aircraft'].replace('\\', '/')
 
         if cliArgs.timezone:
             self.timezone = secondsFromString(cliArgs.timezone)
@@ -47,11 +49,18 @@ class Config():
             self.outPath = defaults['outpath']
 
     def acftByTail(self, tailNumber:str):
+        if self.cliAircraft:
+            return None  # Aircraft passed on the command-line has priority
         for section in self.file.sections():
-            if section.lower().startswith('aircraft/'):
+            if section.lower().replace('\\', '/').startswith('aircraft/'):
                 aircraft = self.file[section]
                 if tailNumber in [tail.strip() for tail in aircraft['Tails'].split(',')]:
                     return section
+        return self.aircraft
+
+    def aircraftPathForTail(self, tailNumber: str) -> str:
+        section = self.acftByTail(tailNumber)
+        return section.replace('\\', '/') if section else self.aircraft
 
     def drefsByTail(self, tailNumber: str) -> Tuple[Dict[str, str], List[str]]:
         sources: Dict[str, str] = {}
@@ -73,7 +82,7 @@ class Config():
             if not key.lower().startswith('dref '):
                 raise ValueError(f"Invalid DREF key (must start with 'DREF '): {key}")
 
-            instrument = key[5:].strip()
+            instrument = key[5:].strip().replace('\\', '/')
 
             exprEnd = None
             depth = 0
@@ -398,7 +407,7 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrComment("Fields below define general data for this flight."),
         fdrComment("ForeFlight only provides a few of the data points that X-Plane can accept.") ,
         '\n',
-        f'ACFT, {config.acftByTail(fdrData.TAIL) or config.aircraft}\n',
+        f'ACFT, {config.aircraftPathForTail(fdrData.TAIL)}\n',
         f'TAIL, {fdrData.TAIL}\n',
         f'DATE, {toMDY(fdrData.DATE)}\n',
         '\n\n',
