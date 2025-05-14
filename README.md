@@ -40,8 +40,8 @@ One `[Defaults]` section and as many `[<Aircraft/*>]` and `[<Tail>]` sections as
 
 ### DREF Definitions
 The required, default fields in an X-Plane FDR file only include time, position, attitude.
-This is fine for getting your simulated plane to follow the track but the cockpit will be dead.
-To get the instruments like the airspeed indicator and artificial horizon working, additional fields must be added to the FDR file to provide the appropriate values.
+This is fine for getting your simulated aircraft to follow the track, but the cockpit displays won't function without additional data.
+To get instruments like the airspeed indicator and artificial horizon working, additional fields must be added to the FDR file to provide the appropriate values.
 
 The `DREF` keys allow you to add additional fields to the output FDR file.
 ForeFlight only provides basic position, attitude, and ground speed. This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)`, and to compute new values `(e.g. round({Pitch}, 3))`.
@@ -99,7 +99,7 @@ These sections support:
 
 DREFs defined in this section will be included in FDR files generated for this specific tail number.
 
-#### 42fdr.conf example:
+## 42fdr.conf example:
 ```
 [Defaults]
 Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
@@ -127,7 +127,7 @@ rollTrim    = 0.0
 ```
 
 
-#### DREF Field Reference:
+### DREF Field Reference:
 *\*CSV Track data contains the raw values from the input file.
 After converting the timestamp to a normal date and time, adjusting for timezone, and calibrating the attitude, the processed data is made available as FDR Track data*
 
