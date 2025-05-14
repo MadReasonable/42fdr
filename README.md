@@ -1,7 +1,7 @@
 # 42fdr
 Python script to convert ForeFlight's exported flight tracks to X-Plane compatible FDR files
 
-**Only works with CSV files currently*
+*\*Only works with CSV files currently*
 
 
 ## Installation
@@ -35,44 +35,69 @@ You can also specify a custom config file location from the command line.
 
 An example configuration is provided with the name `42fdr.conf.example`.
 Make a copy or rename it, then edit it as needed.
-One `[Defaults]` section, one `[DREFS]` section, and as many `[<Aircraft/*>]` and `[<Tail>]` sections as needed are supported.
+One `[Defaults]` section and as many `[<Aircraft/*>]` and `[<Tail>]` sections as needed are supported.
+
+
+### DREF Definitions
+The required, default fields in an X-Plane FDR file only include time, position, attitude.
+This is fine for getting your simulated plane to follow the track but the cockpit will be dead.
+To get the instruments like the airspeed indicator and artificial horizon working, additional fields must be added to the FDR file to provide the appropriate values.
+
+The `DREF` keys allow you to add additional fields to the output FDR file.
+ForeFlight only provides basic position, attitude, and ground speed. This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)`, and to compute new values `(e.g. round({Pitch}, 3))`.
+
+You can define custom DREFs in any section:
+
+- `[Defaults]` — applies to all flights
+- `[Aircraft/...]` — applies to flights using that aircraft model
+- `[Tail]` — applies to flights from that specific tail number
+ 
+Each DREF key must begin with `DREF` followed by the dataref path. This path is the name of the X-Plane dataref to set, and must match exactly (e.g. `sim/cockpit2/gauges/indicators/airspeed_kts_pilot`):
+```
+DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
+```
+
+The value supports three fields:
+```
+<expression>, <scale>, <optionalColumnName>
+```
+
+Where:
+- `<expression>` is a Python expression using values from the track or metadata
+- `<scale>` is a number (usually 1.0) that is kept for legacy reasons
+- `<optionalColumnName>` (optional) overrides the auto-generated column header
+
+Examples:
+```
+DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92
+DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 2), 1.0, Altimeter
+DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, Compass
+```
 
 
 ### [Defaults]
-The `Defaults` section supports three keys, `aircraft`, `timezone`, and `outpath`, which provide defaults for when their respective command-line arguments are not provided.
+The `Defaults` section supports three keys: `aircraft`, `timezone`, and `outpath`, which provide defaults for when their respective command-line arguments are not provided.
 
-
-### [DREFS]
-The `DREFS` section allows you to add additional fields to the output FDR file.
-
-ForeFlight only provides basic position, attitude, and ground speed.  This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)` and to compute new values `(e.g. math.cos({Course} / 180 * math.pi))`.
-
-Add a key for each column you would like to add using the following syntax:
-```
-<xplane/parameter/path> = <expression:string>, <scale:decimal>, [columnName:string]
-```
-where:
-```
-<expression>'s are written in python.
-
-You can use basic arithmetic expressions and all of the math library functions and constants.
-A field reference is provided at the end of this section, after the example config file.
-```
+DREFs defined in this section will be included in **all** generated FDR files.
 
 
 ### [<Aircraft/*>]
-`<Aircraft/*>` sections allows you to map specific tail numbers to X-Plane aircraft models.
+`<Aircraft/*>` sections allow you to map specific tail numbers to X-Plane aircraft models.
 The section name should be the path to the .acf model file, beginning with the Aircraft folder `(e.g. [Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf])`
 
-A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`.
+A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`
+
+DREFs defined in this section will be included in FDR files generated for this aircraft model.
 
 
 ### [\<Tail>]
-
 \<Tail> sections allow for correction of attitude information in the flight track.
 \<Tail> section names are just airplane registration numbers `(e.g. N1234X)`.
-These sections supports three keys (`headingTrim`, `pitchTrim`, `rollTrim`) and allows for attitude correction.  Track data is corrected by adding the appropriate trim value.
 
+These sections support:
+- `headingTrim`, `pitchTrim`, `rollTrim` — These offsets will be added to attitude data for every track point.
+
+DREFs defined in this section will be included in FDR files generated for this specific tail number.
 
 #### 42fdr.conf example:
 ```
@@ -81,36 +106,38 @@ Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
 Timezone = 5
 OutPath  = .
 
-
-[DREFS]
-sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
-sim/cockpit2/gauges/indicators/altitude_ft_pilot = {ALTMSL}, 1.0, Altimeter
-sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, Barometer
-sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, 1.0, Compass
-sim/cockpit2/gauges/indicators/heading_vacuum_deg_mag_pilot = {HEADING}, 1.0, Vacuum Heading
-sim/cockpit2/gauges/indicators/pitch_vacuum_deg_pilot = {PITCH}, 1.0, Vacuum Pitch
-sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = {ROLL}, 1.0, Vacuum Roll
+DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
+DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 2), 1.0, Altimeter
+DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, 1.0, Compass
 
 
 [Aircraft/PIPERS_1150/Piper_PA-28-161/Piper_PA-28-161(Garmin)/piper warrior.acf]
-Tails = N222ND, N238ND, N239ND, N263ND, N267ND, N276ND, N291MK
+Tails = N123ND, N321ND
+
+DREF sim/cockpit2/gauges/indicators/heading_vacuum_deg_mag_pilot = round({HEADING}, 3), 1.0, Vacuum Heading
+DREF sim/cockpit2/gauges/indicators/pitch_vacuum_deg_pilot = {PITCH}, 1.0, Vacuum Pitch
+DREF sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = {ROLL}, 1.0, Vacuum Roll
+DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, Barometer
 
 
-[N263ND]
-headingTrim = 0.0
-pitchTrim   = 0.0
+[N123ND]
+headingTrim = 0.03
+pitchTrim   = -0.01
 rollTrim    = 0.0
 ```
 
 
 #### DREF Field Reference:
-**CSV Track data contains the raw values from the input file.
-After converting the timestamp to a normal date and time,
-adjusting for timezone, and calibrating the attitude,
-the processed data is made available as FDR Track data*
+*\*CSV Track data contains the raw values from the input file.
+After converting the timestamp to a normal date and time, adjusting for timezone, and calibrating the attitude, the processed data is made available as FDR Track data*
 
-***GndSpd is not available in FDR Track data as it is technically
-a DREF value and not part of the core FDR file*
+*\*\*GndSpd is not available in FDR Track data as it is technically a DREF value and not part of the core FDR file*
+
+These are the available placeholders for use in DREF expressions:
+- `Track (FDR)` values are computed for replay
+- `Track (CSV)` values come from the raw input
+- `Flight (meta)` values are metadata or inferred
+
 | Track (FDR) | Track (CSV) | Flight (meta)            |
 |-------------|-------------|--------------------------|
 | {TIME}      | {Timestamp} | {Pilot}                  |
@@ -160,14 +187,14 @@ This will create the file:
 - `./tracklog-E529A53E.fdr`
 
 ---
-<b style='font-size:smaller'>`python3 C:\Users\MadReasonable\bin\42fdr.py -o C:\Users\MadReaonble\Desktop\ tracklog-E529A53E.csv tracklog-DC7A92F3.csv`</b>
+<b style='font-size:smaller'>`python3 C:\Users\MadReasonable\bin\42fdr.py -o C:\Users\MadReaonble\Desktop tracklog-E529A53E.csv tracklog-DC7A92F3.csv`</b>
 
 Convert more than one file and send the output to the desktop.
 The script is not in the current working directory.
 
 This will create the files:
-- `C:\Users\MadReasonable\bin\tracklog-E529A53E.fdr`
-- `C:\Users\MadReasonable\bin\tracklog-DC7A92F3.fdr`
+- `C:\Users\MadReasonable\Desktop\tracklog-E529A53E.fdr`
+- `C:\Users\MadReasonable\Desktop\tracklog-DC7A92F3.fdr`
 
 ---
 <b style='font-size:smaller'>`42fdr.py -c "../mycustom.ini" tracklog-E529A53E.csv`</b>

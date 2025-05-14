@@ -1,6 +1,9 @@
 42fdr.conf
 42fdr.ini
 
+# vscode
+.vscode
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
