@@ -66,12 +66,45 @@ class Config():
             if sectionName and sectionName in self.file:
                 for key, val in self.file[sectionName].items():
                     if key.lower().startswith('dref '):
-                        instrument = key[5:].strip()
-                        parts = [x.strip() for x in val.rsplit(',', 3)]
-                        add(instrument, *parts)
+                        instrument, expr, scale, name = parseDrefConfig(key, val)
+                        add(instrument, expr, scale, name)
+
+        def parseDrefConfig(key: str, val: str) -> Tuple[str, str, str, Union[str, None]]:
+            if not key.lower().startswith('dref '):
+                raise ValueError(f"Invalid DREF key (must start with 'DREF '): {key}")
+
+            instrument = key[5:].strip()
+
+            exprEnd = None
+            depth = 0
+            for i, char in enumerate(val):
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    depth -= 1
+                    if depth < 0:
+                        raise ValueError(f"Unmatched closing parenthesis in DREF expression: {val}")
+                elif char == ',' and depth == 0:
+                    exprEnd = i
+                    break
+
+            if depth != 0:
+                raise ValueError(f"Unmatched parenthesis in DREF expression: {val}")
+
+            if exprEnd is not None:
+                expr = val[:exprEnd].strip()
+                rest = [x.strip() for x in val[exprEnd+1:].split(',', 1)]
+                scale = rest[0] if len(rest) > 0 else '1.0'
+                name = rest[1] if len(rest) > 1 else None
+            else:
+                expr = val.strip()
+                scale = '1.0'
+                name = None
+
+            return instrument, expr, scale, name
 
         # Always include the default ground speed DREF
-        add('sim/cockpit2/gauges/indicators/ground_speed_kt', '{Speed}', '1.0', 'GndSpd')
+        add('sim/cockpit2/gauges/indicators/ground_speed_kt', 'round({Speed}, 4)', '1.0', 'GndSpd')
 
         fromSection('Defaults')
         fromSection(self.acftByTail(tailNumber))
@@ -300,12 +333,12 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         
         trackData = dict(zip(trackCols, trackVals))
         fdrPoint.TIME = datetime.fromtimestamp(float(trackData['Timestamp']) + config.timezone)
-        fdrPoint.LAT = float(trackData['Latitude'])
-        fdrPoint.LONG = float(trackData['Longitude'])
-        fdrPoint.ALTMSL = float(trackData['Altitude'])
-        fdrPoint.HEADING = plusMinus180(float(trackData['Course']) + tailConfig['headingtrim'])
-        fdrPoint.PITCH = plusMinus180(float(trackData['Pitch']) + tailConfig['pitchtrim'])
-        fdrPoint.ROLL = plusMinus180(float(trackData['Bank']) + tailConfig['rolltrim'])
+        fdrPoint.LAT = round(float(trackData['Latitude']), 9)
+        fdrPoint.LONG = round(float(trackData['Longitude']), 9)
+        fdrPoint.ALTMSL = round(float(trackData['Altitude']), 4)
+        fdrPoint.HEADING = round(plusMinus180(float(trackData['Course']) + tailConfig['headingtrim']), 3)
+        fdrPoint.PITCH = round(plusMinus180(float(trackData['Pitch']) + tailConfig['pitchtrim']), 3)
+        fdrPoint.ROLL = round(plusMinus180(float(trackData['Bank']) + tailConfig['rolltrim']), 3)
 
         for name in drefSources:
             value = drefSources[name]
