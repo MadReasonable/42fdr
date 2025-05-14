@@ -240,17 +240,18 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         elif colName == 'Derived Origin':
             flightMeta.DerivedOrigin = colValue
         elif colName == 'Start Latitude':
-            flightMeta.StartLatitude = float(colValue)
+            flightMeta.StartLatitude = round(float(colValue), 7)
         elif colName == 'Start Longitude':
-            flightMeta.StartLongitude = float(colValue)
+            flightMeta.StartLongitude = round(float(colValue), 7)
         elif colName == 'Derived Destination':
             flightMeta.DerivedDestination = colValue
         elif colName == 'End Latitude':
-            flightMeta.EndLatitude = float(colValue)
+            flightMeta.EndLatitude = round(float(colValue), 7)
         elif colName == 'End Longitude':
-            flightMeta.EndLongitude = float(colValue)
+            flightMeta.EndLongitude = round(float(colValue), 7)
         elif colName == 'Start Time':
             flightMeta.StartTime = datetime.fromtimestamp(float(colValue) / 1000 + config.timezone)
+            fdrFlight.DATE = flightMeta.StartTime.date()
         elif colName == 'End Time':
             flightMeta.EndTime = datetime.fromtimestamp(float(colValue) / 1000 + config.timezone)
         elif colName == 'Total Duration':
@@ -339,10 +340,10 @@ def parseGpxFile(config:Config, trackFile:TextIO) -> FdrFlight:
 def flightSummary(flightMeta:FlightMeta) -> str:
     hoursMinutes = str(flightMeta.TotalDuration).split(':')[:2]
 
-    return f'''{flightMeta.TailNumber} - {toMDY(flightMeta.StartTime)} {flightMeta.TotalDistance} miles{(' by '+ flightMeta.Pilot) if flightMeta.Pilot else ''} ({hoursMinutes[0]} hours and {hoursMinutes[1]} minutes)
+    return f'''{flightMeta.TailNumber} - {toYMD(flightMeta.StartTime)} {flightMeta.TotalDistance:.2f} miles{(' by '+ flightMeta.Pilot) if flightMeta.Pilot else ''} ({hoursMinutes[0]} hours and {hoursMinutes[1]} minutes)
 
-    From: {toHMS(flightMeta.StartTime)} {flightMeta.DerivedOrigin} ({flightMeta.StartLatitude}, {flightMeta.StartLongitude})
-      To: {toHMS(flightMeta.EndTime)} {flightMeta.DerivedDestination} ({flightMeta.EndLatitude}, {flightMeta.EndLongitude})
+    From: {toHM(flightMeta.StartTime)}Z {flightMeta.DerivedOrigin} ({flightMeta.StartLatitude}, {flightMeta.StartLongitude})
+      To: {toHM(flightMeta.EndTime)}Z {flightMeta.DerivedDestination} ({flightMeta.EndLatitude}, {flightMeta.EndLongitude})
  Planned: {flightMeta.RouteWaypoints}
 GPS/AHRS: {flightMeta.GPSSource}
   Client: {flightMeta.DeviceModelDetailed} iOS v{flightMeta.iOSVersion}'''
@@ -467,12 +468,20 @@ def toMDY(time:Union[datetime,int,str]):
     return time.strftime('%m/%d/%Y')
 
 
-def toHMS(time:Union[datetime,int,str]):
+def toYMD(time:Union[datetime,int,str]):
     if isinstance(time, str):
         time = int(time)
     if isinstance(time, int):
         time = datetime.fromtimestamp(time / 1000)
-    return time.strftime('%H:%M:%S')
+    return time.strftime('%Y/%m/%d')
+
+
+def toHM(time:Union[datetime,int,str]):
+    if isinstance(time, str):
+        time = int(time)
+    if isinstance(time, int):
+        time = datetime.fromtimestamp(time / 1000)
+    return time.strftime('%H:%M')
 
 
 if __name__ == '__main__':
