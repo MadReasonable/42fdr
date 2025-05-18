@@ -17,9 +17,11 @@ class FileType(Enum):
 
 
 class Config():
+    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf'
     outPath:str = '.'
     timezone:int = 0
-    aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf'
+    timezoneCSV:int = None
+    timezoneKML:int = None
 
     file:MutableMapping = None
 
@@ -40,8 +42,13 @@ class Config():
 
         if cliArgs.timezone:
             self.timezone = secondsFromString(cliArgs.timezone)
-        elif 'timezone' in defaults:
-            self.timezone = secondsFromString(defaults['timezone'])
+        else:
+            if 'timezone' in defaults:
+                self.timezone = secondsFromString(defaults['timezone'])
+            if 'timezonecsv' in defaults:
+                self.timezoneCSV = secondsFromString(defaults['timezonecsv'])
+            if 'timezonekml' in defaults:
+                self.timezoneKML = secondsFromString(defaults['timezonekml'])
 
         if cliArgs.outputFolder:
             self.outPath = cliArgs.outputFolder
@@ -177,7 +184,9 @@ class FdrFlight():
     DISA:int = 0
     WIND:Tuple[int, int] = (0,0)
 
+    timezone:int = 0
     track:List[FdrTrackPoint] = None
+
 
     def __init__(self):
         self.track = []
@@ -199,8 +208,8 @@ class FlightMeta():
     TotalDistance:float = None
     InitialAttitudeSource:str = None
     DeviceModel:str = None
-    DeviceModelDetailed:str = None
-    iOSVersion:str = None
+    DeviceDetails:str = None
+    DeviceVersion:str = None
     BatteryLevel:float = None
     BatteryState:str = None
     GPSSource:str = None
@@ -215,21 +224,25 @@ class FlightMeta():
 
 
 def main(argv:List[str]):
-    parser = argparse.ArgumentParser(description='Convert ForeFlight compatible track files into X-Plane compatible FDR files')
+    parser = argparse.ArgumentParser(
+        description='Convert ForeFlight compatible track files into X-Plane compatible FDR files',
+        epilog='Example: python 42fdr.py tracklog-1.csv tracklog-2.kml'
+    )
+
     parser.add_argument('-a', '--aircraft', default=None, help='Path to default X-Plane aircraft')
     parser.add_argument('-c', '--config', default=None, help='Path to 42fdr config file')
     parser.add_argument('-t', '--timezone', default=None, help='An offset to add to all times processed.  +/-hh:mm[:ss] or +/-<decimal hours>')
     parser.add_argument('-o', '--outputFolder', default=None, help='Path to write X-Plane compatible FDR v4 output file')
-    parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV)')
+    parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV, KML)')
     args = parser.parse_args()
     
     config = Config(args)
     for inPath in args.trackfile:
         trackFile = open(inPath, 'r')
-        fdrData = parseInputFile(config, trackFile, close=True)
-        outPath = getOutpath(config, inPath, fdrData)
+        fdrFlight = parseInputFile(config, trackFile, close=True)
+        outPath = getOutpath(config, inPath, fdrFlight)
         fdrFile = open(outPath, 'w')
-        writeOutputFile(config, fdrFile, fdrData)
+        writeOutputFile(config, fdrFile, fdrFlight)
 
 
 def parseInputFile(config:Config, trackFile:TextIO, close:bool = False) -> FdrFlight:
@@ -255,7 +268,7 @@ def getFiletype(file:TextIO) -> FileType:
         filetype = FileType.CSV
     else:
         line = file.readline()
-        if line.startsWith('<kml'):
+        if line.startswith('<kml'):
             filetype = FileType.KML
         elif line.startswith('<gpx'):
             filetype = FileType.GPX
@@ -272,6 +285,8 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
     metaCols = readCsvRow(csvReader)
     metaCols.remove('Battery State') # Bug in ForeFlight
     metaVals = readCsvRow(csvReader)
+
+    fdrFlight.timezone = config.timezoneCSV if config.timezoneCSV is not None else config.timezone
 
     metaData = dict(zip(metaCols, metaVals))
     for colName in metaData:
@@ -292,10 +307,10 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         elif colName == 'End Longitude':
             flightMeta.EndLongitude = round(float(colValue), 7)
         elif colName == 'Start Time':
-            flightMeta.StartTime = datetime.fromtimestamp(float(colValue) / 1000 + config.timezone)
+            flightMeta.StartTime = datetime.fromtimestamp(float(colValue) / 1000 + fdrFlight.timezone)
             fdrFlight.DATE = flightMeta.StartTime.date()
         elif colName == 'End Time':
-            flightMeta.EndTime = datetime.fromtimestamp(float(colValue) / 1000 + config.timezone)
+            flightMeta.EndTime = datetime.fromtimestamp(float(colValue) / 1000 + fdrFlight.timezone)
         elif colName == 'Total Duration':
             flightMeta.TotalDuration = timedelta(seconds=float(colValue))
         elif colName == 'Total Distance':
@@ -305,9 +320,9 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         elif colName == 'Device Model':
             flightMeta.DeviceModel = colValue
         elif colName == 'Device Model Detailed':
-            flightMeta.DeviceModelDetailed = colValue
+            flightMeta.DeviceDetails = colValue
         elif colName == 'iOS Version':
-            flightMeta.iOSVersion = colValue
+            flightMeta.DeviceVersion = colValue
         elif colName == 'Battery Level':
             flightMeta.BatteryLevel = float(colValue)
         elif colName == 'Battery State':
@@ -341,13 +356,13 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         fdrPoint = FdrTrackPoint()
         
         trackData = dict(zip(trackCols, trackVals))
-        fdrPoint.TIME = datetime.fromtimestamp(float(trackData['Timestamp']) + config.timezone)
+        fdrPoint.TIME = datetime.fromtimestamp(float(trackData['Timestamp']) + fdrFlight.timezone)
         fdrPoint.LAT = round(float(trackData['Latitude']), 9)
         fdrPoint.LONG = round(float(trackData['Longitude']), 9)
         fdrPoint.ALTMSL = round(float(trackData['Altitude']), 4)
-        fdrPoint.HEADING = round(plusMinus180(float(trackData['Course']) + tailConfig['headingtrim']), 3)
-        fdrPoint.PITCH = round(plusMinus180(float(trackData['Pitch']) + tailConfig['pitchtrim']), 3)
-        fdrPoint.ROLL = round(plusMinus180(float(trackData['Bank']) + tailConfig['rolltrim']), 3)
+        fdrPoint.HEADING = round(wrapHeading(float(trackData['Course']) + tailConfig['headingtrim']), 3)
+        fdrPoint.PITCH = round(wrapAttitude(float(trackData['Pitch']) + tailConfig['pitchtrim']), 3)
+        fdrPoint.ROLL = round(wrapAttitude(float(trackData['Bank']) + tailConfig['rolltrim']), 3)
 
         for name in drefSources:
             value = drefSources[name]
@@ -369,9 +384,116 @@ def readCsvRow(csvFile) -> List[str]:
         return reader
 
 
-def parseKmlFile(config:Config, trackFile:TextIO) -> FdrFlight:
-    # kml = ET.fromstringlist(trackFile.readlines())
-    raise NotImplementedError
+def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
+    ns = {
+        "kml": "http://www.opengis.net/kml/2.2",
+        "gx": "http://www.google.com/kml/ext/2.2"
+    }
+
+    tree = ET.parse(trackFile)
+    root = tree.getroot()
+
+    # Extract ExtendedData values
+    flightMeta = FlightMeta()
+    extended = root.find(".//kml:ExtendedData", ns)
+    if extended is not None:
+        for data in extended.findall("kml:Data", ns):
+            name = data.attrib.get("name")
+            value = data.findtext("kml:value", default="", namespaces=ns)
+            if name == "tailNumber":
+                flightMeta.TailNumber = value
+            elif name == "pilotName":
+                flightMeta.Pilot = value
+            elif name == "GPSModelName":
+                flightMeta.GPSSource = value
+            elif name == "source":
+                flightMeta.ImportedFrom = value
+            elif name == "flightTitle":
+                # Parse DerivedOrigin / DerivedDestination from flightTitle
+                flightTitle = value.strip()
+                if ' - ' in flightTitle:
+                    origin, destination = [x.strip() for x in flightTitle.split(' - ', 1)]
+                    flightMeta.DerivedOrigin = origin
+                    flightMeta.DerivedDestination = destination
+                elif flightTitle:
+                    flightMeta.DerivedOrigin = flightTitle
+                    flightMeta.DerivedDestination = flightTitle
+
+    fdrFlight = FdrFlight()
+    fdrFlight.TAIL = flightMeta.TailNumber or "UNKNOWN"
+    fdrFlight.DATE = datetime.today().date()
+
+    tailConfig = config.tail(fdrFlight.TAIL)
+    drefSources, _ = config.drefsByTail(fdrFlight.TAIL)
+
+    # Find the <Placemark> with <gx:Track> and no <name>
+    trackPlacemark = None
+    for placemark in root.findall(".//kml:Placemark", ns):
+        name = placemark.find("kml:name", ns)
+        if name is None or (name.text or "").strip() == "":
+            if placemark.find("gx:Track", ns) is not None:
+                trackPlacemark = placemark
+                break
+
+    if trackPlacemark is None:
+        raise ValueError("No valid <Placemark> with <gx:Track> found")
+
+    fdrFlight.timezone = config.timezoneKML if config.timezoneKML is not None else config.timezone
+
+    track = trackPlacemark.find("gx:Track", ns)
+    times = [datetime.fromisoformat(when.text.replace("Z", "+00:00"))
+             for when in track.findall("kml:when", ns)]
+    coords = [list(map(float, c.text.strip().split())) for c in track.findall("gx:coord", ns)]
+
+    # Read optional arrays (e.g. pitch, bank, course, speed)
+    extras = {}
+    for arr in extended.findall(".//gx:SimpleArrayData", ns):
+        key = arr.attrib.get("name")
+        values = [float(v.text) for v in arr.findall("gx:value", ns)]
+        extras[key] = values
+
+    for i, (time, coord) in enumerate(zip(times, coords)):
+        trackData = {
+            'Timestamp': time.timestamp(),
+            'Latitude': coord[1],
+            'Longitude': coord[0],
+            'Altitude': coord[2] * 3.280839895,
+            'Course': extras.get("course", [0])[i],
+            'Pitch': extras.get("pitch", [0])[i],
+            'Bank': extras.get("bank", [0])[i],
+            'Speed': extras.get("speed_kts", [0])[i],
+        }
+
+        fdrPoint = FdrTrackPoint()
+        fdrPoint.TIME = time + timedelta(seconds=fdrFlight.timezone)
+        fdrPoint.LAT = round(trackData['Latitude'], 9)
+        fdrPoint.LONG = round(trackData['Longitude'], 9)
+        fdrPoint.ALTMSL = round(trackData['Altitude'], 4)
+        fdrPoint.HEADING = round(wrapHeading(trackData['Course'] + tailConfig["headingtrim"]), 3)
+        fdrPoint.PITCH = round(wrapAttitude(trackData['Pitch'] + tailConfig["pitchtrim"]), 3)
+        fdrPoint.ROLL = round(wrapAttitude(trackData['Bank'] + tailConfig["rolltrim"]), 3)
+
+        for name in drefSources:
+            expr = drefSources[name]
+            meta = vars(flightMeta)
+            point = vars(fdrPoint)
+            fdrPoint.drefs[name] = eval(expr.format(**meta, **point, **trackData))
+
+        fdrFlight.track.append(fdrPoint)
+    
+    # Derive key metadata from track and Data block
+    flightMeta.StartTime      = fdrFlight.track[0].TIME
+    flightMeta.StartLatitude  = fdrFlight.track[0].LAT
+    flightMeta.StartLongitude = fdrFlight.track[0].LONG
+    flightMeta.EndTime        = fdrFlight.track[-1].TIME
+    flightMeta.EndLatitude    = fdrFlight.track[-1].LAT
+    flightMeta.EndLongitude   = fdrFlight.track[-1].LONG
+    flightMeta.TotalDuration  = flightMeta.EndTime - flightMeta.StartTime
+
+    fdrFlight.DATE = flightMeta.StartTime.date()
+    fdrFlight.summary = flightSummary(flightMeta)
+
+    return fdrFlight
 
 
 def parseGpxFile(config:Config, trackFile:TextIO) -> FdrFlight:
@@ -380,20 +502,52 @@ def parseGpxFile(config:Config, trackFile:TextIO) -> FdrFlight:
 
 
 def flightSummary(flightMeta:FlightMeta) -> str:
+    pilot = f' by {flightMeta.Pilot}' if flightMeta.Pilot else ''
+    distance = f" {flightMeta.TotalDistance:.2f} miles" if flightMeta.TotalDistance else ""
     hoursMinutes = str(flightMeta.TotalDuration).split(':')[:2]
+    origin = flightMeta.DerivedOrigin or "N/A"
+    destination = flightMeta.DerivedDestination or "N/A"
+    waypoints = flightMeta.RouteWaypoints or "N/A"
 
-    return f'''{flightMeta.TailNumber} - {toYMD(flightMeta.StartTime)} {flightMeta.TotalDistance:.2f} miles{(' by '+ flightMeta.Pilot) if flightMeta.Pilot else ''} ({hoursMinutes[0]} hours and {hoursMinutes[1]} minutes)
+    clientLine = ''
+    deviceInfo = flightMeta.DeviceDetails or flightMeta.DeviceModel
+    if deviceInfo:
+        clientLine = f"\n  Client: {deviceInfo}"
+        if flightMeta.DeviceVersion:
+            clientLine += f" iOS v{flightMeta.DeviceVersion}"
 
-    From: {toHM(flightMeta.StartTime)}Z {flightMeta.DerivedOrigin} ({flightMeta.StartLatitude}, {flightMeta.StartLongitude})
-      To: {toHM(flightMeta.EndTime)}Z {flightMeta.DerivedDestination} ({flightMeta.EndLatitude}, {flightMeta.EndLongitude})
- Planned: {flightMeta.RouteWaypoints}
-GPS/AHRS: {flightMeta.GPSSource}
-  Client: {flightMeta.DeviceModelDetailed} iOS v{flightMeta.iOSVersion}'''
+    importedLine = ''
+    if flightMeta.ImportedFrom and flightMeta.ImportedFrom != 'iOS':
+        importedLine = f"\nImported: {flightMeta.ImportedFrom}"
+
+    heading = f"{flightMeta.TailNumber} - {toYMD(flightMeta.StartTime)}{distance}{pilot} ({hoursMinutes[0]} hours and {hoursMinutes[1]} minutes)"
+    underline = '\n'+ ('-' * len(heading))
+
+    return f'''{heading}{underline}
+    From: {toHM(flightMeta.StartTime)}Z {origin} ({flightMeta.StartLatitude}, {flightMeta.StartLongitude})
+      To: {toHM(flightMeta.EndTime)}Z {destination} ({flightMeta.EndLatitude}, {flightMeta.EndLongitude})
+ Planned: {waypoints}
+GPS/AHRS: {flightMeta.GPSSource}''' + clientLine + importedLine
 
 
-def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
+def writeOutputFile(config:Config, fdrFile:TextIO, fdrFlight:FdrFlight):
     timestamp = datetime.now(timezone.utc).strftime('%Y/%m/%d %H:%M:%SZ')
-    drefSources, drefDefines = config.drefsByTail(fdrData.TAIL)
+    drefSources, drefDefines = config.drefsByTail(fdrFlight.TAIL)
+
+    tzOffset = fdrFlight.timezone
+    if tzOffset:
+        totalMinutes = abs(int(tzOffset)) // 60
+        hours, minutes = divmod(totalMinutes, 60)
+        direction = "added to" if tzOffset > 0 else "subtracted from"
+        parts = []
+        if hours:
+            parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+        if minutes:
+            parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+        tzComment = " and ".join(parts)
+        tzOffsetExplanation = f"All timestamps below this line have had {tzComment} {direction} their original values."
+    else:
+        tzOffsetExplanation = "All timestamps below this line are in the same timezone as the original file."
 
     fdrFile.writelines([
         'A\n4\n',
@@ -402,14 +556,16 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrComment(f'This X-Plane compatible FDR file was converted from a ForeFlight track file using 42fdr.py'),
         fdrComment('https://github.com/MadReasonable/42fdr'),
         '\n',
-        fdrComment(fdrData.summary),
+        fdrComment(tzOffsetExplanation),
+        '\n',
+        fdrComment(fdrFlight.summary),
         '\n\n',
         fdrComment("Fields below define general data for this flight."),
         fdrComment("ForeFlight only provides a few of the data points that X-Plane can accept.") ,
         '\n',
-        f'ACFT, {config.aircraftPathForTail(fdrData.TAIL)}\n',
-        f'TAIL, {fdrData.TAIL}\n',
-        f'DATE, {toMDY(fdrData.DATE)}\n',
+        f'ACFT, {config.aircraftPathForTail(fdrFlight.TAIL)}\n',
+        f'TAIL, {fdrFlight.TAIL}\n',
+        f'DATE, {toMDY(fdrFlight.DATE)}\n',
         '\n\n',
         fdrComment('DREFs below (if any) define additional columns beyond the 7th (Roll)'),
         fdrComment('in the flight track data that follows.'),
@@ -417,12 +573,11 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrData:FdrFlight):
         fdrDrefs(drefDefines),
         '\n\n',
         fdrComment('The remainder of this file consists of GPS/AHRS track points.'),
-        fdrComment('The timestamps beginning each row are in the same timezone as the original file.'),
         '\n',
         fdrColNames(drefSources.keys()),
     ])
 
-    for point in fdrData.track:
+    for point in fdrFlight.track:
         time    = point.TIME.strftime('%H:%M:%S.%f')
         long    = str.rjust(str(point.LONG), FdrColumnWidth)
         lat     = str.rjust(str(point.LAT), FdrColumnWidth)
@@ -456,7 +611,7 @@ COMM,                      Longitude,            Latitude,              AltMSL, 
     return names +'\n'
 
 
-def getOutpath(config:Config, inPath:str, fdrData:FdrFlight):
+def getOutpath(config:Config, inPath:str, fdrFlight:FdrFlight):
     filename = os.path.basename(inPath)
     outPath = config.outPath or '.'
     return Path(os.path.join(outPath, filename)).with_suffix('.fdr')
@@ -491,7 +646,11 @@ def numberOrString(numeric:str):
         return numeric
 
 
-def plusMinus180(degrees:float):
+def wrapHeading(degrees:float):
+    return degrees % 360
+
+
+def wrapAttitude(degrees:float):
     mod = 360 if degrees >= 0 else -360
     degrees = degrees % mod
     if degrees > 180:
@@ -527,4 +686,14 @@ def toHM(time:Union[datetime,int,str]):
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+    try:
+        sys.exit(main(sys.argv))
+    except FileNotFoundError as e:
+        print(f"[Error] File not found: {e.filename}")
+        sys.exit(3)
+    except ValueError as e:
+        print(f"[Error] Invalid input: {e}")
+        sys.exit(2)
+    except Exception as e:
+        print(f"[Unexpected Error] {e}")
+    sys.exit(1)
