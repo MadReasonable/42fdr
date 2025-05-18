@@ -1,7 +1,8 @@
 [Defaults]
-Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
-Timezone = 4
-OutPath  = .
+Aircraft    = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
+Timezone    = 5   # CSV files record times in Local Time
+TimezoneKML = 0   # KML files record times in UTC
+OutPath     = .
 
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round({Speed}, 4), 1.0, IAS
 DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 4), 1.0, Altimeter

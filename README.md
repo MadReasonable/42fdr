@@ -1,7 +1,8 @@
 # 42fdr
-Python script to convert ForeFlight's exported flight tracks to X-Plane compatible FDR files
+**Python script to convert ForeFlight's exported flight tracks to X-Plane compatible FDR files.**
 
-*\*Only works with CSV files currently*
+42fdr support both CSV and KML files, but CSV are preferred as they provide more metadata in a smaller, simpler file.
+Either format will produce equally valid FDR files.
 
 
 ## Installation
@@ -76,7 +77,12 @@ DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, Compass
 
 
 ### [Defaults]
-The `Defaults` section supports three keys: `aircraft`, `timezone`, and `outpath`, which provide defaults for when their respective command-line arguments are not provided.
+The `[Defaults]` section defines fallback values used when command-line options are not provided. Common keys include:
+- `aircraft` – default X-Plane aircraft path
+- `timezone` – default timezone offset
+- `outpath` – default folder for generated `.fdr` files
+
+You can also specify `timezoneCSV` and `timezoneKML` to override `timezone` for those specific input file types. However, the `--timezone` command-line option always takes precedence over all of these.
 
 DREFs defined in this section will be included in **all** generated FDR files.
 
@@ -102,9 +108,10 @@ DREFs defined in this section will be included in FDR files generated for this s
 ## 42fdr.conf example:
 ```
 [Defaults]
-Aircraft = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
-Timezone = 5
-OutPath  = .
+Aircraft    = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
+Timezone    = 5   # CSV files record times in Local Time
+TimezoneKML = 0   # KML files record times in UTC
+OutPath     = .
 
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
 DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 2), 1.0, Altimeter
@@ -128,7 +135,7 @@ rollTrim    = 0.0
 
 
 ### DREF Field Reference:
-*\*CSV Track data contains the raw values from the input file.
+*\*Raw Track data contains the raw values from the input file.
 After converting the timestamp to a normal date and time, adjusting for timezone, and calibrating the attitude, the processed data is made available as FDR Track data*
 
 *\*\*GndSpd is not available in FDR Track data as it is technically a DREF value and not part of the core FDR file*
@@ -138,35 +145,35 @@ These are the available placeholders for use in DREF expressions:
 - `Track (CSV)` values come from the raw input
 - `Flight (meta)` values are metadata or inferred
 
-| Track (FDR) | Track (CSV) | Flight (meta)            |
-|-------------|-------------|--------------------------|
-| {TIME}      | {Timestamp} | {Pilot}                  |
-| {LAT}       | {Latitude}  | {TailNumber}             |
-| {LONG}      | {Longitude} | {DerivedOrigin}          |
-| {ALTMSL}    | {Altitude}  | {StartLatitude}          |
-| {HEADING}   | {Course}    | {StartLongitude}         |
-| {PITCH}     | {Pitch}     | {DerivedDestination}     |
-| {ROLL}      | {Bank}      | {EndLatitude}            |
-|             | {Speed}     | {EndLongitude}           |
-|             |             | {StartTime}              |
-|             |             | {EndTime}                |
-|             |             | {TotalDuration}          |
-|             |             | {TotalDistance}          |
-|             |             | {InitialAttitudeSource}  |
-|             |             | {DeviceModel}            |
-|             |             | {DeviceModelDetailed}    |
-|             |             | {iOSVersion}             |
-|             |             | {BatteryLevel}           |
-|             |             | {BatteryState}           |
-|             |             | {GPSSource}              |
-|             |             | {MaximumVerticalError}   |
-|             |             | {MinimumVerticalError}   |
-|             |             | {AverageVerticalError}   |
-|             |             | {MaximumHorizontalError} |
-|             |             | {MinimumHorizontalError} |
-|             |             | {AverageHorizontalError} |
-|             |             | {ImportedFrom}           |
-|             |             | {RouteWaypoints}         |
+| Flight (meta)            | Track (raw) | Track (FDR) |
+|--------------------------|-------------|-------------|
+| {Pilot}                  | {Timestamp} | {TIME}      |
+| {TailNumber}             | {Latitude}  | {LAT}       |
+| {DerivedOrigin}          | {Longitude} | {LONG}      |
+| {StartLatitude}          | {Altitude}  | {ALTMSL}    |
+| {StartLongitude}         | {Course}    | {HEADING}   |
+| {DerivedDestination}     | {Pitch}     | {PITCH}     |
+| {EndLatitude}            | {Bank}      | {ROLL}      |
+| {EndLongitude}           | {Speed}     |             |
+| {StartTime}              |             |             |
+| {EndTime}                |             |             |
+| {TotalDuration}          |             |             |
+| {TotalDistance}          |             |             |
+| {InitialAttitudeSource}  |             |             |
+| {DeviceModel}            |             |             |
+| {DeviceDetails}          |             |             |
+| {DeviceVersion}          |             |             |
+| {BatteryLevel}           |             |             |
+| {BatteryState}           |             |             |
+| {GPSSource}              |             |             |
+| {MaximumVerticalError}   |             |             |
+| {MinimumVerticalError}   |             |             |
+| {AverageVerticalError}   |             |             |
+| {MaximumHorizontalError} |             |             |
+| {MinimumHorizontalError} |             |             |
+| {AverageHorizontalError} |             |             |
+| {RouteWaypoints}         |             |             |
+| {ImportedFrom}           |             |             |
 
 
 ## Command-line Examples
@@ -187,7 +194,7 @@ This will create the file:
 - `./tracklog-E529A53E.fdr`
 
 ---
-<b style='font-size:smaller'>`python3 C:\Users\MadReasonable\bin\42fdr.py -o C:\Users\MadReaonble\Desktop tracklog-E529A53E.csv tracklog-DC7A92F3.csv`</b>
+<b style='font-size:smaller'>`python3 C:\Users\MadReasonable\bin\42fdr.py -o C:\Users\MadReaonble\Desktop tracklog-E529A53E.csv tracklog-DC7A92F3.kml`</b>
 
 Convert more than one file and send the output to the desktop.
 The script is not in the current working directory.
@@ -197,7 +204,7 @@ This will create the files:
 - `C:\Users\MadReasonable\Desktop\tracklog-DC7A92F3.fdr`
 
 ---
-<b style='font-size:smaller'>`42fdr.py -c "../mycustom.ini" tracklog-E529A53E.csv`</b>
+<b style='font-size:smaller'>`42fdr.py -c "../mycustom.ini" tracklog-E529A53E.kml`</b>
 
 A custom config file is used.  The FDR files output path, aircraft, and columns depend on the specific configuration.
 
