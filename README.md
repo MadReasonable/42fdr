@@ -176,37 +176,103 @@ These are the available placeholders for use in DREF expressions:
 | {ImportedFrom}           |             |             |
 
 
-## Command-line Examples
+## 📊 Command-Line Examples
+*\*All of these examples assume the folder containing `42fdr.py` is in the PATH.*
 
-<b style='font-size:smaller'>`./42fdr.py tracklog-E529A53E-FBC7-4CAC-AB46-28C123A9038A.csv`</b>
+### ✅ Minimal Usage
 
-The simplest use case.  Python is installed and configured correctly, we are in a bash shell, the script is in the same folder as the track file, we are only converting one file, using the default aircraft, and it should be saved to the current folder.
+#### **Linux/macOS**
+```bash
+42fdr.py tracklog-A.csv
+```
 
-This will create the file:
-- `./tracklog-E529A53E-FBC7-4CAC-AB46-28C123A9038A.fdr`
+#### **Windows (via `42fdr.bat` in PATH)**
+```cmd
+42fdr tracklog-A.csv
+```
 
----
-<b style='font-size:smaller'>`python3 42fdr.py -a "Aircraft/Laminar Research/Lancair Evolution/N844X.acf" tracklog-E529A53E.csv`</b>
+Converts a single file using default aircraft and config.  
+Output is saved in the same folder as the input file.
 
-The same as above, except the Python interpreter is called explicitly, which is needed when using Windows, and the aircraft is changed to the Lancair Evolution.
-
-This will create the file:
-- `./tracklog-E529A53E.fdr`
-
----
-<b style='font-size:smaller'>`python3 C:\Users\MadReasonable\bin\42fdr.py -o C:\Users\MadReaonble\Desktop tracklog-E529A53E.csv tracklog-DC7A92F3.kml`</b>
-
-Convert more than one file and send the output to the desktop.
-The script is not in the current working directory.
-
-This will create the files:
-- `C:\Users\MadReasonable\Desktop\tracklog-E529A53E.fdr`
-- `C:\Users\MadReasonable\Desktop\tracklog-DC7A92F3.fdr`
+Creates:
+- `tracklog-A.fdr`
 
 ---
-<b style='font-size:smaller'>`42fdr.py -c "../mycustom.ini" tracklog-E529A53E.kml`</b>
 
-A custom config file is used.  The FDR files output path, aircraft, and columns depend on the specific configuration.
+### 📂 Convert Multiple Files
 
-This will create the file:
-- `<path/depends/on/config>/tracklog-E529A53E.fdr`
+#### **Linux/macOS**
+```bash
+42fdr.py tracklog-A.csv tracklog-B.kml
+```
+
+#### **Windows**
+```cmd
+42fdr tracklog-A.csv tracklog-B.kml
+```
+
+Processes multiple track logs in one command.  
+Each `.fdr` is saved next to its corresponding input file.
+
+Creates:
+- `tracklog-A.fdr`
+- `tracklog-B.fdr`
+
+---
+
+### ✈️ Override Aircraft
+
+#### **Linux/macOS**
+```bash
+42fdr.py -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog-A.csv
+```
+
+#### **Windows**
+```cmd
+42fdr -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog-A.csv
+```
+
+Overrides the default aircraft specified in the config.  
+Useful for aircraft-specific log conversions.
+
+Creates:
+- `tracklog-A.fdr`
+
+---
+
+### 📁 Override Output Folder
+
+#### **Linux/macOS**
+```bash
+42fdr.py -o ~/Desktop tracklog-A.csv tracklog-B.kml
+```
+
+#### **Windows**
+```cmd
+42fdr -o %USERPROFILE%\Desktop tracklog-A.csv tracklog-B.kml
+```
+
+Saves `.fdr` files to a specific folder instead of next to the input files.
+
+Creates:
+- `Desktop/tracklog-A.fdr`
+- `Desktop/tracklog-B.fdr`
+
+---
+
+### ⚙️ Use Custom Config File
+
+#### **Linux/macOS**
+```bash
+42fdr.py -c ~/configs/custom.ini tracklog-A.kml
+```
+
+#### **Windows**
+```cmd
+42fdr -c %USERPROFILE%\configs\custom.ini tracklog-A.kml
+```
+
+Loads settings (e.g. aircraft, timezone, DREFs, output path) from a custom config file.
+
+Creates:
+- `<path/defined/in/config>/tracklog-A.fdr`
