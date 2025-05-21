@@ -45,15 +45,12 @@ No install process is required — just extract the files and add the folder to 
    It’s recommended to place the folder somewhere in your home directory to avoid needing elevated permissions.
 
    - **Windows:**
-
      ```cmd
      %USERPROFILE%\42fdr
      ```
-
      *(e.g. C:\\Users\\\<yourname>\\42fdr)*
 
    - **macOS/Linux:**
-
      ```bash
      ~/.local/42fdr
      ```
@@ -80,14 +77,14 @@ No install process is required — just extract the files and add the folder to 
 
 
 ## Usage
-macOS/Linux:
-```bash
-42fdr.py [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] trackFile1 [trackFile2 ...]
-```
-
 Windows (via *42fdr.bat* in PATH):
 ```cmd
 42fdr [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] trackFile1 [trackFile2 ...]
+```
+
+macOS/Linux:
+```bash
+42fdr.py [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] trackFile1 [trackFile2 ...]
 ```
 
 42FDR will convert one or more files, rename it with the `.fdr` extension, and save the output to the current working directory.
@@ -261,19 +258,19 @@ These are the available placeholders for use in DREF expressions:
 *\*All of these examples assume the folder containing `42fdr.py` is in the PATH.*
 
 ### ✅ Minimal Usage
+Converts a single file using default aircraft and config.  
+By default, output is saved in the current working folder.
 
-#### **Linux/macOS**
-```bash
-42fdr.py tracklog.csv
-```
 
 #### **Windows (via `42fdr.bat` in PATH)**
 ```cmd
 42fdr tracklog.csv
 ```
 
-Converts a single file using default aircraft and config.  
-Output is saved in the same folder as the input file.
+#### **Linux/macOS**
+```bash
+42fdr.py tracklog.csv
+```
 
 **Creates:**
 - `tracklog.fdr`
@@ -281,19 +278,17 @@ Output is saved in the same folder as the input file.
 ---
 
 ### 🧮 Convert Multiple Files
-
-#### **Linux/macOS**
-```bash
-42fdr.py tracklog-1.csv tracklog-2.kml
-```
+Processes multiple track logs in one command.  
 
 #### **Windows**
 ```cmd
 42fdr tracklog-1.csv tracklog-2.kml
 ```
 
-Processes multiple track logs in one command.  
-Each `.fdr` is saved next to its corresponding input file.
+#### **Linux/macOS**
+```bash
+42fdr.py tracklog-1.csv tracklog-2.kml
+```
 
 **Creates:**
 - `tracklog-1.fdr`
@@ -302,19 +297,18 @@ Each `.fdr` is saved next to its corresponding input file.
 ---
 
 ### 🛩️ Specify Aircraft
+Override the aircraft specified in the config.  
 
-#### **Linux/macOS**
-```bash
-42fdr.py -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog.csv
-```
 
 #### **Windows**
 ```cmd
 42fdr -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog.csv
 ```
 
-Overrides the default aircraft specified in the config.  
-Useful for aircraft-specific log conversions.
+#### **Linux/macOS**
+```bash
+42fdr.py -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog.csv
+```
 
 **Creates:**
 - `tracklog.fdr`
@@ -322,18 +316,17 @@ Useful for aircraft-specific log conversions.
 ---
 
 ### 📁 Override Output Folder
-
-#### **Linux/macOS**
-```bash
-42fdr.py -o ~/Desktop tracklog-1.csv tracklog-2.kml
-```
+Save `.fdr` files to a specific folder instead of next to the input files.
 
 #### **Windows**
 ```cmd
 42fdr -o %USERPROFILE%\Desktop tracklog-A.csv tracklog-B.kml
 ```
 
-Saves `.fdr` files to a specific folder instead of next to the input files.
+#### **Linux/macOS**
+```bash
+42fdr.py -o ~/Desktop tracklog-1.csv tracklog-2.kml
+```
 
 **Creates:**
 - `Desktop/tracklog-1.fdr`
@@ -342,18 +335,17 @@ Saves `.fdr` files to a specific folder instead of next to the input files.
 ---
 
 ### 🛠️ Use Custom Config File
-
-#### **Linux/macOS**
-```bash
-42fdr.py -c ~/configs/custom.ini tracklog.kml
-```
+Load settings (e.g. aircraft, timezone, DREFs, output path) from a custom config file.
 
 #### **Windows**
 ```cmd
 42fdr -c %USERPROFILE%\configs\custom.ini tracklog.kml
 ```
 
-Loads settings (e.g. aircraft, timezone, DREFs, output path) from a custom config file.
+#### **Linux/macOS**
+```bash
+42fdr.py -c ~/configs/custom.ini tracklog.kml
+```
 
 **Creates:**
 - `<path/defined/in/config>/tracklog.fdr`
