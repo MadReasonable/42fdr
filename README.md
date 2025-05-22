@@ -35,12 +35,14 @@ https://www.python.org/downloads/
 
 No install process is required — just extract the files and add the folder to your PATH.
 
-1. Go to the GitHub Releases page:  
-   https://github.com/MadReasonable/42fdr/releases
+1. Download
+   - Go to the GitHub Releases page:
 
-2. Download the latest `.zip` (Windows) or `.tar.gz` (macOS/Linux) release.
+     https://github.com/MadReasonable/42fdr/releases
 
-3. Extract the entire folder to a working location.
+   - Download the latest release in your preferred format (`.zip` or `.tar.gz`).
+
+2. Extract the entire folder to a working location.
 
    It’s recommended to place the folder somewhere in your home directory to avoid needing elevated permissions.
 
@@ -55,7 +57,7 @@ No install process is required — just extract the files and add the folder to 
      ~/.local/42fdr
      ```
 
-4. *(Recommended)* Add the folder to your system `PATH` so you can run `42fdr` from any directory:
+3. *(Recommended)* Add the folder to your system `PATH` so you can run `42fdr` from any directory:
 
    - **Windows:**
      - Press `Win + R`, type `sysdm.cpl`, and press Enter
