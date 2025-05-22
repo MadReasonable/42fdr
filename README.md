@@ -315,6 +315,27 @@ Processes multiple track logs in one command.
 <br/>
 
 ---
+### 📁 Override Output Folder
+Save `.fdr` files to a specific folder instead of next to the input files.
+
+#### **Windows**
+```cmd
+42fdr -o %USERPROFILE%\Desktop tracklog-1.csv tracklog-2.kml
+```
+
+#### **Linux/macOS**
+```bash
+42fdr.py -o ~/Desktop tracklog-1.csv tracklog-2.kml
+```
+<br/>
+
+**Creates:**
+- `Desktop/tracklog-1.fdr`
+- `Desktop/tracklog-2.fdr`
+
+<br/>
+
+---
 ### 🛩️ Specify Aircraft
 Override the aircraft specified in the config.  
 
@@ -332,27 +353,6 @@ Override the aircraft specified in the config.
 
 **Creates:**
 - `tracklog.fdr`
-
-<br/>
-
----
-### 📁 Override Output Folder
-Save `.fdr` files to a specific folder instead of next to the input files.
-
-#### **Windows**
-```cmd
-42fdr -o %USERPROFILE%\Desktop tracklog-A.csv tracklog-B.kml
-```
-
-#### **Linux/macOS**
-```bash
-42fdr.py -o ~/Desktop tracklog-1.csv tracklog-2.kml
-```
-<br/>
-
-**Creates:**
-- `Desktop/tracklog-1.fdr`
-- `Desktop/tracklog-2.fdr`
 
 <br/>
 
