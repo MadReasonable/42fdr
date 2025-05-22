@@ -13,8 +13,11 @@ When properly configured, it can process hundreds of flights across a fleet of a
 
 *Requires Python 3.9 or higher*
 
+<br/>
 
 ## Installation
+
+42fdr does not need to be "installed" — just extract the files and add the folder to your PATH.
 
 ### Step 1 – Install Python (if missing)
 
@@ -30,17 +33,16 @@ https://www.python.org/downloads/
 
 ✅ **Be sure to check “Add Python to PATH” during installation.**
 
+<br/>
+
 ---
-### Step 2 – Download and Set Up 42fdr
+### Step 2 – Download 42fdr
 
-No install process is required — just extract the files and add the folder to your PATH.
+1. Get the lateest release from the GitHub:
 
-1. Download
-   - Go to the GitHub Releases page:
+   - https://github.com/MadReasonable/42fdr/releases
 
-     https://github.com/MadReasonable/42fdr/releases
-
-   - Download the latest release in your preferred format (`.zip` or `.tar.gz`).
+     Download in your preferred format (`.zip` or `.tar.gz`).
 
 2. Extract the entire folder to a working location.
 
@@ -56,27 +58,32 @@ No install process is required — just extract the files and add the folder to 
      ```bash
      ~/.local/42fdr
      ```
+     <br/>
 
-3. *(Recommended)* Add the folder to your system `PATH` so you can run `42fdr` from any directory:
+---
+### Step 3 – Set Up 42fdr
 
-   - **Windows:**
-     - Press `Win + R`, type `sysdm.cpl`, and press Enter
-     - Go to the **Advanced** tab → click **Environment Variables**
-     - Under “User variables,” edit `Path` and add:
+*(Recommended)* Add the folder to your system `PATH` so you can run `42fdr` from any directory:
 
-        ```cmd
-        %USERPROFILE%\42fdr
-        ```
+- **Windows:**
+  - Press `Win + R`, type `sysdm.cpl`, and press Enter
+  - Go to the **Advanced** tab → click **Environment Variables**
+  - Under “User variables,” edit `Path` and add:
 
-   - **macOS/Linux:**
-     - Add this line to your shell config file (e.g. `~/.bashrc`, `~/.zshrc`, or `~/.profile`):
+    ```cmd
+    %USERPROFILE%\42fdr
+    ```
 
-        ```bash
-        export PATH="$HOME/.local/42fdr:$PATH"
-        ```
+- **macOS/Linux:**
+  - Add this line to your shell config file (e.g. `~/.bashrc`, `~/.zshrc`, or `~/.profile`):
 
-   ✅ After updating your PATH, close and reopen any terminal windows to apply the change.
+    ```bash
+    export PATH="$HOME/.local/42fdr:$PATH"
+    ```
 
+✅ After updating your PATH, close and reopen any terminal windows to apply the change.
+
+<br/>
 
 ## Usage
 Windows (via *42fdr.bat* in PATH):
@@ -100,8 +107,8 @@ Either format will produce equally valid FDR files.
 | `-c`    | Specify a config file.  A config file can be used to set the options below instead of on the command-line.  A config file can also define custom DREFs, automatically lookup an X-Plane aircraft by tail number, and load tail specific attitude calibrations.
 | `-a`    | Choose an X-Plane aircraft.  X-Plane requires the FDR file to specify an aircraft model, which is not included in the ForeFlight track file.  `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf` is used by default unless overridden by a config file or command line option.
 | `-t`    | Adjust all times by this (positive or negative) amount.  If you've recorded your flight in local time, this value should be the *opposite* of your actual timezone. It will be added to recorded timestamps to get Zulu time.  Can be expressed as a decimal number of hours (e.g. `3.5`) or in the format +/-hh:mm[:ss] (e.g. `-5:00`)
-| `-o`    | Choose a different output path.
-
+| `-o`    | Choose a different output path.  
+<br/>
 
 
 ## Using a config file
@@ -116,76 +123,7 @@ Make a copy or rename it, then edit it as needed.
 One `[Defaults]` section and as many `[<Aircraft/*>]` and `[<Tail>]` sections as needed are supported.
 
 
-### DREF Definitions
-The required, default fields in an X-Plane FDR file only include time, position, attitude.
-This is enough to make your simulated aircraft follow the track, but cockpit instruments won’t function correctly without additional data.
-To get instruments like the airspeed indicator and artificial horizon working, additional fields must be added to the FDR file to provide the appropriate values.
-
-`DREF` keys allow you to add additional fields to the output FDR file.
-ForeFlight only provides basic position, attitude, and ground speed. This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)`, and to compute new values `(e.g. round({Pitch}, 3))`.
-
-You can define custom DREFs in any section:
-
-- `[Defaults]` — applies to all flights
-- `[Aircraft/...]` — applies to flights using that aircraft model
-- `[Tail]` — applies to flights from that specific tail number
- 
-Each DREF key must begin with `DREF` followed by the dataref path. This path is the name of the X-Plane dataref to set, and must match exactly (e.g. `sim/cockpit2/gauges/indicators/airspeed_kts_pilot`):
-```ini
-DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
-```
-
-The value supports three fields:
-```ini
-<expression>, <scale>, <optionalColumnName>
-```
-
-Where:
-- `<expression>` is a Python expression using values from the track or metadata
-- `<scale>` is a number (usually 1.0) that is kept for legacy reasons
-- `<optionalColumnName>` (optional) overrides the auto-generated column header
-
-Examples:
-```ini
-DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92
-DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 2), 1.0, Altimeter
-DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, Compass
-```
-
-
-### [Defaults]
-The `[Defaults]` section defines fallback values used when command-line options are not provided. Common keys include:
-- `aircraft` – default X-Plane aircraft path
-- `timezone` – default timezone offset
-- `outpath` – default folder for generated `.fdr` files
-
-You can also specify `timezoneCSV` and `timezoneKML` to override `timezone` for those specific input file types. However, the `--timezone` command-line option always takes precedence over all of these.
-
-DREFs defined in this section will be included in **all** generated FDR files.
-
-
-### [<Aircraft/*>]
-`<Aircraft/*>` sections allow you to map specific tail numbers to X-Plane aircraft models.
-The section name should be the path to the .acf model file, beginning with the Aircraft folder. For example:
-```ini
-[Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf]
-```
-
-A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`
-
-DREFs defined in this section will be included in FDR files generated for this aircraft model.
-
-
-### [\<Tail>]
-\<Tail> sections allow for correction of attitude information in the flight track.
-\<Tail> section names are just airplane registration numbers `(e.g. N1234X)`.
-
-These sections support:
-- `headingTrim`, `pitchTrim`, `rollTrim` — These offsets will be added to attitude data for every track point.
-
-DREFs defined in this section will be included in FDR files generated for this specific tail number.
-
-## 42fdr.conf example:
+### 42fdr.conf example:
 ```ini
 [Defaults]
 Aircraft    = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
@@ -212,9 +150,90 @@ headingTrim = 0.03
 pitchTrim   = -0.01
 rollTrim    = 0.0
 ```
+<br/>
+
+### DREF Definitions
+The required, default fields in an X-Plane FDR file only include time, position, attitude.
+This is enough to make your simulated aircraft follow the track, but cockpit instruments won’t function correctly without additional data.
+To get instruments like the airspeed indicator and artificial horizon working, additional fields must be added to the FDR file to provide the appropriate values.
+
+`DREF` keys allow you to add additional fields to the output FDR file.
+ForeFlight only provides basic position, attitude, and ground speed. This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)`, and to compute new values `(e.g. round({Pitch}, 3))`.
+
+You can define custom DREFs in any section:
+- `[Defaults]` — applies to all flights
+- `[Aircraft/...]` — applies to flights using that aircraft model
+- `[Tail]` — applies to flights from that specific tail number
+
+<br/> 
+
+Each DREF key must begin with `DREF` followed by the dataref path. This path is the name of the X-Plane dataref to set, and must match exactly:
+```ini
+DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
+```
+<br/>
+
+The value supports three fields:
+```ini
+<expression>, <scale>, <optionalColumnName>
+```
+<br/>
+
+Where:
+- `<expression>` is a Python expression using values from the track or metadata
+- `<scale>` is a number (usually 1.0) that is kept for legacy reasons
+- `<optionalColumnName>` (optional) overrides the auto-generated column header
+
+<br/>
+
+Examples:
+```ini
+DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92
+DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 2), 1.0, Altimeter
+DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, Compass
+```
+<br/>
 
 
-### DREF Field Reference:
+### [Defaults] Section
+The `[Defaults]` section defines fallback values used when command-line options are not provided. Common keys include:
+- `aircraft` – default X-Plane aircraft path
+- `timezone` – default timezone offset
+- `outpath` – default folder for generated `.fdr` files
+
+<br/>
+
+You can also specify `timezoneCSV` and `timezoneKML` to override `timezone` for those specific input file types. However, the `--timezone` command-line option always takes precedence over all of these.
+
+DREFs defined in this section will be included in **all** generated FDR files.
+
+<br/>
+
+### [<Aircraft/*>] Sections
+`<Aircraft/*>` sections allow you to map specific tail numbers to X-Plane aircraft models.
+The section name should be the path to the .acf model file, beginning with the Aircraft folder. For example:
+```ini
+[Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf]
+```
+
+A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`
+
+DREFs defined in this section will be included in FDR files generated for this aircraft model.
+
+<br/>
+
+### [\<Tail>] Sections
+\<Tail> sections allow for correction of attitude information in the flight track.
+\<Tail> section names are just airplane registration numbers `(e.g. N1234X)`.
+
+These sections support:
+- `headingTrim`, `pitchTrim`, `rollTrim` — These offsets will be added to attitude data for every track point.
+
+DREFs defined in this section will be included in FDR files generated for this specific tail number.
+
+<br/>
+
+## DREF Field Reference:
 *\*Raw Track data contains the raw values from the input file.
 After converting the timestamp to a normal date and time, adjusting for timezone, and calibrating the attitude, the processed data is made available as FDR Track data*
 
@@ -254,13 +273,14 @@ These are the available placeholders for use in DREF expressions:
 | {AverageHorizontalError} |             |             |
 | {RouteWaypoints}         |             |             |
 | {ImportedFrom}           |             |             |
+<br/>
 
 
 ## Command-Line Examples
 *\*All of these examples assume the folder containing `42fdr.py` is in the PATH.*
 
 ### ✅ Minimal Usage
-Converts a single file using default aircraft and config.  
+Converts a single file using default aircraft and config.
 By default, output is saved in the current working folder.
 
 
@@ -273,12 +293,14 @@ By default, output is saved in the current working folder.
 ```bash
 42fdr.py tracklog.csv
 ```
+<br/>
 
 **Creates:**
 - `tracklog.fdr`
 
----
+<br/>
 
+---
 ### 🧮 Convert Multiple Files
 Processes multiple track logs in one command.  
 
@@ -291,13 +313,15 @@ Processes multiple track logs in one command.
 ```bash
 42fdr.py tracklog-1.csv tracklog-2.kml
 ```
+<br/>
 
 **Creates:**
 - `tracklog-1.fdr`
 - `tracklog-2.fdr`
 
----
+<br/>
 
+---
 ### 🛩️ Specify Aircraft
 Override the aircraft specified in the config.  
 
@@ -311,12 +335,14 @@ Override the aircraft specified in the config.
 ```bash
 42fdr.py -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog.csv
 ```
+<br/>
 
 **Creates:**
 - `tracklog.fdr`
 
----
+<br/>
 
+---
 ### 📁 Override Output Folder
 Save `.fdr` files to a specific folder instead of next to the input files.
 
@@ -329,13 +355,15 @@ Save `.fdr` files to a specific folder instead of next to the input files.
 ```bash
 42fdr.py -o ~/Desktop tracklog-1.csv tracklog-2.kml
 ```
+<br/>
 
 **Creates:**
 - `Desktop/tracklog-1.fdr`
 - `Desktop/tracklog-2.fdr`
 
----
+<br/>
 
+---
 ### 🛠️ Use Custom Config File
 Load settings (e.g. aircraft, timezone, DREFs, output path) from a custom config file.
 
@@ -348,6 +376,7 @@ Load settings (e.g. aircraft, timezone, DREFs, output path) from a custom config
 ```bash
 42fdr.py -c ~/configs/custom.ini tracklog.kml
 ```
+<br/>
 
 **Creates:**
 - `<path/defined/in/config>/tracklog.fdr`
