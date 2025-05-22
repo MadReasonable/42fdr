@@ -167,10 +167,12 @@ You can define custom DREFs in any section:
 
 <br/> 
 
-Each DREF key must begin with `DREF` followed by the dataref path. This path is the name of the X-Plane dataref to set, and must match exactly:
+Each DREF key must begin with `DREF` followed by the dataref path.
 ```ini
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
 ```
+*\*A searchable list of all available datarefs is available at https://developer.x-plane.com/datarefs/*
+
 <br/>
 
 The value supports three fields:
@@ -279,12 +281,12 @@ Converts a single file using default aircraft and config.
 By default, output is saved in the current working folder.
 
 
-#### **Windows (via `42fdr.bat` in PATH)**
+##### **Windows (via `42fdr.bat` in PATH)**
 ```cmd
 42fdr tracklog.csv
 ```
 
-#### **Linux/macOS**
+##### **Linux/macOS**
 ```bash
 42fdr.py tracklog.csv
 ```
@@ -299,12 +301,12 @@ By default, output is saved in the current working folder.
 ---
 Processes multiple track logs in one command.  
 
-#### **Windows**
+##### **Windows**
 ```cmd
 42fdr tracklog-1.csv tracklog-2.kml
 ```
 
-#### **Linux/macOS**
+##### **Linux/macOS**
 ```bash
 42fdr.py tracklog-1.csv tracklog-2.kml
 ```
@@ -320,12 +322,12 @@ Processes multiple track logs in one command.
 ---
 Save `.fdr` files to a specific folder instead of next to the input files.
 
-#### **Windows**
+##### **Windows**
 ```cmd
 42fdr -o %USERPROFILE%\Desktop tracklog-1.csv tracklog-2.kml
 ```
 
-#### **Linux/macOS**
+##### **Linux/macOS**
 ```bash
 42fdr.py -o ~/Desktop tracklog-1.csv tracklog-2.kml
 ```
@@ -342,12 +344,12 @@ Save `.fdr` files to a specific folder instead of next to the input files.
 Override the aircraft specified in the config.  
 
 
-#### **Windows**
+##### **Windows**
 ```cmd
 42fdr -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog.csv
 ```
 
-#### **Linux/macOS**
+##### **Linux/macOS**
 ```bash
 42fdr.py -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog.csv
 ```
@@ -362,12 +364,12 @@ Override the aircraft specified in the config.
 ---
 Load settings (e.g. aircraft, timezone, DREFs, output path) from a custom config file.
 
-#### **Windows**
+##### **Windows**
 ```cmd
 42fdr -c %USERPROFILE%\configs\custom.ini tracklog.kml
 ```
 
-#### **Linux/macOS**
+##### **Linux/macOS**
 ```bash
 42fdr.py -c ~/configs/custom.ini tracklog.kml
 ```
