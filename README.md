@@ -270,9 +270,11 @@ These are the available placeholders for use in DREF expressions:
 
 
 ## Command-Line Examples
-*\*All of these examples assume the folder containing `42fdr.py` is in the PATH.*
+*\*All of these examples assume the folder containing `42fdr.py` is in the PATH.*  
+<br/>
 
 ### ✅ Minimal Usage
+---
 Converts a single file using default aircraft and config.
 By default, output is saved in the current working folder.
 
@@ -293,8 +295,8 @@ By default, output is saved in the current working folder.
 
 <br/>
 
----
 ### 🧮 Convert Multiple Files
+---
 Processes multiple track logs in one command.  
 
 #### **Windows**
@@ -314,8 +316,8 @@ Processes multiple track logs in one command.
 
 <br/>
 
----
 ### 📁 Override Output Folder
+---
 Save `.fdr` files to a specific folder instead of next to the input files.
 
 #### **Windows**
@@ -335,8 +337,8 @@ Save `.fdr` files to a specific folder instead of next to the input files.
 
 <br/>
 
----
 ### 🛩️ Specify Aircraft
+---
 Override the aircraft specified in the config.  
 
 
@@ -356,8 +358,8 @@ Override the aircraft specified in the config.
 
 <br/>
 
----
 ### 🛠️ Use Custom Config File
+---
 Load settings (e.g. aircraft, timezone, DREFs, output path) from a custom config file.
 
 #### **Windows**
