@@ -11,16 +11,17 @@ It is simple to use out of the box, working without any configuration or command
 
 When properly configured, it can process hundreds of flights across a fleet of aircraft — automatically assigning the correct X-Plane model and setting up custom cockpit instruments.
 
-*Requires Python 3.9 or higher*
-
+*Requires Python 3.9 or higher*  
 <br/>
 
 ## Installation
 
-42fdr does not need to be "installed" — just extract the files and add the folder to your PATH.
+42fdr does not need to be "installed" — just extract the files and add the folder to your PATH.  
+<br/>
+
 
 ### Step 1 – Install Python (if missing)
-
+---
 If you're not sure whether Python is already installed, open a command prompt or terminal and run:
 
 ```bash
@@ -31,12 +32,11 @@ If that doesn't work, or if the version is older than 3.9, download and install 
 
 https://www.python.org/downloads/
 
-✅ **Be sure to check “Add Python to PATH” during installation.**
-
+✅ **Be sure to check “Add Python to PATH” during installation.**  
 <br/>
 
----
 ### Step 2 – Download 42fdr
+---
 
 1. Get the lateest release from the GitHub:
 
@@ -60,9 +60,8 @@ https://www.python.org/downloads/
      ```
      <br/>
 
----
 ### Step 3 – Set Up 42fdr
-
+---
 *(Recommended)* Add the folder to your system `PATH` so you can run `42fdr` from any directory:
 
 - **Windows:**
@@ -153,6 +152,7 @@ rollTrim    = 0.0
 <br/>
 
 ### DREF Definitions
+---
 The required, default fields in an X-Plane FDR file only include time, position, attitude.
 This is enough to make your simulated aircraft follow the track, but cockpit instruments won’t function correctly without additional data.
 To get instruments like the airspeed indicator and artificial horizon working, additional fields must be added to the FDR file to provide the appropriate values.
@@ -186,16 +186,9 @@ Where:
 
 <br/>
 
-Examples:
-```ini
-DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92
-DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 2), 1.0, Altimeter
-DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = {HEADING}, Compass
-```
-<br/>
-
 
 ### [Defaults] Section
+---
 The `[Defaults]` section defines fallback values used when command-line options are not provided. Common keys include:
 - `aircraft` – default X-Plane aircraft path
 - `timezone` – default timezone offset
@@ -205,11 +198,11 @@ The `[Defaults]` section defines fallback values used when command-line options 
 
 You can also specify `timezoneCSV` and `timezoneKML` to override `timezone` for those specific input file types. However, the `--timezone` command-line option always takes precedence over all of these.
 
-DREFs defined in this section will be included in **all** generated FDR files.
-
+DREFs defined in this section will be included in **all** generated FDR files.  
 <br/>
 
 ### [<Aircraft/*>] Sections
+---
 `<Aircraft/*>` sections allow you to map specific tail numbers to X-Plane aircraft models.
 The section name should be the path to the .acf model file, beginning with the Aircraft folder. For example:
 ```ini
@@ -218,11 +211,11 @@ The section name should be the path to the .acf model file, beginning with the A
 
 A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`
 
-DREFs defined in this section will be included in FDR files generated for this aircraft model.
-
+DREFs defined in this section will be included in FDR files generated for this aircraft model.  
 <br/>
 
 ### [\<Tail>] Sections
+---
 \<Tail> sections allow for correction of attitude information in the flight track.
 \<Tail> section names are just airplane registration numbers `(e.g. N1234X)`.
 
