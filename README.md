@@ -88,12 +88,12 @@ https://www.python.org/downloads/
 ## Usage
 Windows (via *42fdr.bat* in PATH):
 ```cmd
-42fdr [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] trackFile1 [trackFile2 ...]
+42fdr [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] [--oo offsetOrig] [--od offsetDest] trackFile1 [trackFile2 ...]
 ```
 
 macOS/Linux:
 ```bash
-42fdr.py [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] trackFile1 [trackFile2 ...]
+42fdr.py [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] [--oo offsetOrig] [--od offsetDest] trackFile1 [trackFile2 ...]
 ```
 
 42FDR will convert one or more files, rename it with the `.fdr` extension, and save the output to the current working directory.
@@ -107,7 +107,9 @@ Either format will produce equally valid FDR files.
 | `-c`    | Specify a config file.  A config file can be used to set the options below instead of on the command-line.  A config file can also define custom DREFs, automatically lookup an X-Plane aircraft by tail number, and load tail specific attitude calibrations.
 | `-a`    | Choose an X-Plane aircraft.  X-Plane requires the FDR file to specify an aircraft model, which is not included in the ForeFlight track file.  `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf` is used by default unless overridden by a config file or command line option.
 | `-t`    | Adjust all times by this (positive or negative) amount.  If you've recorded your flight in local time, this value should be the *opposite* of your actual timezone. It will be added to recorded timestamps to get Zulu time.  Can be expressed as a decimal number of hours (e.g. `3.5`) or in the format +/-hh:mm[:ss] (e.g. `-5:00`)
-| `-o`    | Choose a different output path.  
+| `-o`    | Choose a different output path for the generated `.fdr` files.
+| `--oo`  | Airport position offset at origin airport in feet: `east,north,up`. Use with `--od` for airport-aware blending. Offsets adjust only the written track position for X-Plane scenery alignment; the comment summary and DREF columns stay as computed from the original ForeFlight data.
+| `--od`  | Airport position offset at destination airport in feet; same format as `--oo`.
 <br/>
 
 
@@ -127,8 +129,8 @@ One `[Defaults]` section and as many `[<Aircraft/*>]` and `[<Tail>]` sections as
 ```ini
 [Defaults]
 Aircraft    = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
-Timezone    = 5   # CSV files record times in Local Time
-TimezoneKML = 0   # KML files record times in UTC
+Timezone    = 5   ; CSV files record times in Local Time
+TimezoneKML = 0   ; KML files record times in UTC
 OutPath     = .
 
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
