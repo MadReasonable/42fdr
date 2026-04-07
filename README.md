@@ -27,6 +27,7 @@ If you're not sure whether Python is already installed, open a command prompt or
 ```bash
 python --version
 ```
+<br/>
 
 If that doesn't work, or if the version is older than 3.9, download and install the latest version from:
 

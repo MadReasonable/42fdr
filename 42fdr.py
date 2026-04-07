@@ -4,7 +4,7 @@ import math  # Used when evaluating user DREF value expressions
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, MutableMapping, TextIO, Tuple, Union
+from typing import Dict, Iterable, List, TextIO, Tuple, Union
 
 
 FdrColumnWidth = 19
@@ -19,11 +19,11 @@ class FileType(Enum):
 class Config():
     aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf'
     outPath:str = '.'
-    timezone:int = 0
-    timezoneCSV:int = None
-    timezoneKML:int = None
+    timezone:float = 0
+    timezoneCSV:Union[float, None] = None
+    timezoneKML:Union[float, None] = None
 
-    file:MutableMapping = None
+    file:Union[configparser.RawConfigParser, None] = None
 
     def __init__(self, cliArgs:argparse.Namespace):
         self.file = configparser.RawConfigParser()
@@ -41,14 +41,14 @@ class Config():
             self.aircraft = defaults['aircraft'].replace('\\', '/')
 
         if cliArgs.timezone:
-            self.timezone = secondsFromString(cliArgs.timezone)
+            self.timezone = timezoneOffsetSeconds(cliArgs.timezone)
         else:
             if 'timezone' in defaults:
-                self.timezone = secondsFromString(defaults['timezone'])
+                self.timezone = timezoneOffsetSeconds(defaults['timezone'])
             if 'timezonecsv' in defaults:
-                self.timezoneCSV = secondsFromString(defaults['timezonecsv'])
+                self.timezoneCSV = timezoneOffsetSeconds(defaults['timezonecsv'])
             if 'timezonekml' in defaults:
-                self.timezoneKML = secondsFromString(defaults['timezonekml'])
+                self.timezoneKML = timezoneOffsetSeconds(defaults['timezonekml'])
 
         if cliArgs.outputFolder:
             self.outPath = cliArgs.outputFolder
@@ -56,13 +56,14 @@ class Config():
             self.outPath = defaults['outpath']
 
     def acftByTail(self, tailNumber:str):
-        if self.cliAircraft:
-            return None  # Aircraft passed on the command-line has priority
-        for section in self.file.sections():
-            if section.lower().replace('\\', '/').startswith('aircraft/'):
-                aircraft = self.file[section]
-                if tailNumber in [tail.strip() for tail in aircraft['Tails'].split(',')]:
-                    return section
+        if not self.cliAircraft and self.file:
+            for section in self.file.sections():
+                if section.lower().replace('\\', '/').startswith('aircraft/'):
+                    aircraft = self.file[section]
+                    if tailNumber in [tail.strip() for tail in aircraft['Tails'].split(',')]:
+                        return section
+
+        # If no aircraft is provided via CLI or config, or if no matching aircraft section is found, return the default aircraft
         return self.aircraft
 
     def aircraftPathForTail(self, tailNumber: str) -> str:
@@ -73,13 +74,13 @@ class Config():
         sources: Dict[str, str] = {}
         defines: List[str] = []
 
-        def add(instrument: str, value: str, scale: str = '1.0', name: str = None):
+        def add(instrument: str, value: str, scale: str = '1.0', name: Union[str, None] = None):
             name = name or instrument.rpartition('/')[2][:FdrColumnWidth]
             sources[name] = value
             defines.append(f'{instrument}\t{scale}\t\t// source: {value}')
 
         def fromSection(sectionName: str):
-            if sectionName and sectionName in self.file:
+            if self.file and sectionName in self.file:
                 for key, val in self.file[sectionName].items():
                     if key.lower().startswith('dref '):
                         instrument, expr, scale, name = parseDrefConfig(key, val)
@@ -128,14 +129,22 @@ class Config():
 
         return sources, defines
 
+
+    _TAIL_TRIM_KEYS = frozenset[str]({'headingtrim', 'pitchtrim', 'rolltrim'})
+
     def tail(self, tailNumber:str):
         tailConfig = {}
-        for section in self.file.sections():
-            if section.lower() == tailNumber.lower():
-                tailSection = self.file[section]
-                for key in self.file[section]:
-                    tailConfig[key] = numberOrString(tailSection[key])
-                break
+        if self.file:
+            for section in self.file.sections():
+                if section.lower() == tailNumber.lower():
+                    tailSection = self.file[section]
+                    for key in self.file[section]:
+                        valueString = tailSection[key]
+                        if key.lower() in self._TAIL_TRIM_KEYS:
+                            tailConfig[key] = float(valueString)
+                        else:
+                            tailConfig[key] = valueString
+                    break
 
         if 'headingtrim' not in tailConfig:
             tailConfig['headingtrim'] = 0
@@ -145,6 +154,7 @@ class Config():
             tailConfig['rolltrim'] = 0
 
         return tailConfig
+
 
     def findConfigFile(self, cliPath:str):
         if cliPath:
@@ -170,7 +180,7 @@ class FdrTrackPoint():
     PITCH:float = 0
     ROLL:float = 0
 
-    drefs:Dict[str, float] = None
+    drefs: Dict[str, float]
 
     def __init__(self):
         self.drefs = {}
@@ -184,8 +194,8 @@ class FdrFlight():
     DISA:int = 0
     WIND:Tuple[int, int] = (0,0)
 
-    timezone:int = 0
-    track:List[FdrTrackPoint] = None
+    timezone:float = 0
+    track:List[FdrTrackPoint]
 
 
     def __init__(self):
@@ -194,33 +204,33 @@ class FdrFlight():
 
 
 class FlightMeta():
-    Pilot:str = None
-    TailNumber:str = None
-    DerivedOrigin:str = None
-    StartLatitude:float = None
-    StartLongitude:float = None
-    DerivedDestination:str = None
-    EndLatitude:float = None
-    EndLongitude:float = None
-    StartTime:float = None
-    EndTime:float = None
-    TotalDuration:timedelta = None
-    TotalDistance:float = None
-    InitialAttitudeSource:str = None
-    DeviceModel:str = None
-    DeviceDetails:str = None
-    DeviceVersion:str = None
-    BatteryLevel:float = None
-    BatteryState:str = None
-    GPSSource:str = None
-    MaximumVerticalError:float = None
-    MinimumVerticalError:float = None
-    AverageVerticalError:float = None
-    MaximumHorizontalError:float = None
-    MinimumHorizontalError:float = None
-    AverageHorizontalError:float = None
-    ImportedFrom:str = None
-    RouteWaypoints:str = None
+    Pilot                  : Union[str, None]       = None
+    TailNumber             : Union[str, None]       = None
+    DerivedOrigin          : Union[str, None]       = None
+    StartLatitude          : Union[float, None]     = None
+    StartLongitude         : Union[float, None]     = None
+    DerivedDestination     : Union[str, None]       = None
+    EndLatitude            : Union[float, None]     = None
+    EndLongitude           : Union[float, None]     = None
+    StartTime              : Union[datetime, None]  = None
+    EndTime                : Union[datetime, None]  = None
+    TotalDuration          : Union[timedelta, None] = None
+    TotalDistance          : Union[float, None]     = None
+    InitialAttitudeSource  : Union[str, None]       = None
+    DeviceModel            : Union[str, None]       = None
+    DeviceDetails          : Union[str, None]       = None
+    DeviceVersion          : Union[str, None]       = None
+    BatteryLevel           : Union[float, None]     = None
+    BatteryState           : Union[str, None]       = None
+    GPSSource              : Union[str, None]       = None
+    MaximumVerticalError   : Union[float, None]     = None
+    MinimumVerticalError   : Union[float, None]     = None
+    AverageVerticalError   : Union[float, None]     = None
+    MaximumHorizontalError : Union[float, None]     = None
+    MinimumHorizontalError : Union[float, None]     = None
+    AverageHorizontalError : Union[float, None]     = None
+    ImportedFrom           : Union[str, None]       = None
+    RouteWaypoints         : Union[str, None]       = None
 
 
 def main(argv:List[str]):
@@ -239,24 +249,39 @@ def main(argv:List[str]):
     config = Config(args)
     for inPath in args.trackfile:
         trackFile = open(inPath, 'r')
-        fdrFlight = parseInputFile(config, trackFile, close=True)
-        outPath = getOutpath(config, inPath, fdrFlight)
-        fdrFile = open(outPath, 'w')
-        writeOutputFile(config, fdrFile, fdrFlight)
+        fdrFlight = parseInputFile(config, trackFile)
+
+        if fdrFlight is not None:
+            outPath = getOutpath(config, inPath, fdrFlight)
+            fdrFile = open(outPath, 'w')
+            writeOutputFile(config, fdrFile, fdrFlight)
+            fdrFile.close()
+        else:
+            print(f"No flight data found in {inPath}")
+    return 0
 
 
-def parseInputFile(config:Config, trackFile:TextIO, close:bool = False) -> FdrFlight:
-    filetype = getFiletype(trackFile)
+def getOutpath(config:Config, inPath:str, fdrFlight:FdrFlight):
+    filename = os.path.basename(inPath)
+    outPath = config.outPath or '.'
+    return Path(os.path.join(outPath, filename)).with_suffix('.fdr')
 
-    if filetype == FileType.CSV:
-        return parseCsvFile(config, trackFile)
-    elif filetype == FileType.KML:
-        return parseKmlFile(config, trackFile)
-    elif filetype == FileType.GPX:
-        return parseGpxFile(config, trackFile)
 
-    if close and not trackFile.closed:
-        trackFile.close
+def parseInputFile(config:Config, trackFile:TextIO) -> Union[FdrFlight, None]:
+    try:
+        filetype = getFiletype(trackFile)
+
+        if filetype == FileType.CSV:
+            return parseCsvFile(config, trackFile)
+        if filetype == FileType.KML:
+            return parseKmlFile(config, trackFile)
+        if filetype == FileType.GPX:
+            return parseGpxFile(config, trackFile)
+
+        return None
+    finally:
+        if not trackFile.closed:
+            trackFile.close()
 
 
 def getFiletype(file:TextIO) -> FileType:
@@ -277,14 +302,30 @@ def getFiletype(file:TextIO) -> FileType:
     return filetype
 
 
+def addDrefsToTrackPoint(
+    fdrPoint: FdrTrackPoint,
+    drefSources: Dict[str, str],
+    flightMeta: FlightMeta,
+    trackData: dict,
+) -> None:
+    meta = vars(flightMeta)
+    point = vars(fdrPoint)
+    for name, expr in drefSources.items():
+        fdrPoint.drefs[name] = eval(expr.format(**meta, **point, **trackData))
+
+
 def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
     flightMeta = FlightMeta()
     fdrFlight = FdrFlight()
 
     csvReader = csv.reader(trackFile, delimiter=',', quotechar='"')
     metaCols = readCsvRow(csvReader)
+    if metaCols is None:
+        raise ValueError('CSV file is missing the metadata header row')
     metaCols.remove('Battery State') # Bug in ForeFlight
     metaVals = readCsvRow(csvReader)
+    if metaVals is None:
+        raise ValueError('CSV file is missing the metadata values row')
 
     fdrFlight.timezone = config.timezoneCSV if config.timezoneCSV is not None else config.timezone
 
@@ -353,8 +394,10 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
     trackCols = readCsvRow(csvReader)
     trackVals = readCsvRow(csvReader)
     while trackVals:
+        if trackCols is None:
+            raise ValueError('CSV track header row is missing')
         fdrPoint = FdrTrackPoint()
-        
+
         trackData = dict(zip(trackCols, trackVals))
         fdrPoint.TIME = datetime.fromtimestamp(float(trackData['Timestamp']) + fdrFlight.timezone)
         fdrPoint.LAT = round(float(trackData['Latitude']), 9)
@@ -364,11 +407,7 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
         fdrPoint.PITCH = round(wrapAttitude(float(trackData['Pitch']) + tailConfig['pitchtrim']), 3)
         fdrPoint.ROLL = round(wrapAttitude(float(trackData['Bank']) + tailConfig['rolltrim']), 3)
 
-        for name in drefSources:
-            value = drefSources[name]
-            meta = vars(flightMeta)
-            point = vars(fdrPoint)
-            fdrPoint.drefs[name] = eval(value.format(**meta, **point, **trackData))
+        addDrefsToTrackPoint(fdrPoint, drefSources, flightMeta, trackData)
 
         fdrFlight.track.append(fdrPoint)
         trackVals = readCsvRow(csvReader)
@@ -376,12 +415,11 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
     return fdrFlight
 
 
-def readCsvRow(csvFile) -> List[str]:
-    reader = None;
+def readCsvRow(csvFile) -> Union[List[str], None]:
     try:
-        reader = next(csvFile)
-    finally:
-        return reader
+        return next(csvFile)
+    except StopIteration:
+        return None
 
 
 def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
@@ -441,15 +479,19 @@ def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
     fdrFlight.timezone = config.timezoneKML if config.timezoneKML is not None else config.timezone
 
     track = trackPlacemark.find("gx:Track", ns)
-    times = [datetime.fromisoformat(when.text.replace("Z", "+00:00"))
+    if track is None:
+        raise ValueError("gx:Track missing inside placemark")
+
+    times = [datetime.fromisoformat((when.text or "").replace("Z", "+00:00"))
              for when in track.findall("kml:when", ns)]
-    coords = [list(map(float, c.text.strip().split())) for c in track.findall("gx:coord", ns)]
+    coords = [list(map(float, (c.text or "").strip().split()))
+              for c in track.findall("gx:coord", ns)]
 
     # Read optional arrays (e.g. pitch, bank, course, speed)
     extras = {}
-    for arr in extended.findall(".//gx:SimpleArrayData", ns):
+    for arr in (extended.findall(".//gx:SimpleArrayData", ns) if extended is not None else []):
         key = arr.attrib.get("name")
-        values = [float(v.text) for v in arr.findall("gx:value", ns)]
+        values = [float(v.text or "0") for v in arr.findall("gx:value", ns)]
         extras[key] = values
 
     for i, (time, coord) in enumerate(zip(times, coords)):
@@ -473,11 +515,7 @@ def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
         fdrPoint.PITCH = round(wrapAttitude(trackData['Pitch'] + tailConfig["pitchtrim"]), 3)
         fdrPoint.ROLL = round(wrapAttitude(trackData['Bank'] + tailConfig["rolltrim"]), 3)
 
-        for name in drefSources:
-            expr = drefSources[name]
-            meta = vars(flightMeta)
-            point = vars(fdrPoint)
-            fdrPoint.drefs[name] = eval(expr.format(**meta, **point, **trackData))
+        addDrefsToTrackPoint(fdrPoint, drefSources, flightMeta, trackData)
 
         fdrFlight.track.append(fdrPoint)
     
@@ -509,6 +547,12 @@ def flightSummary(flightMeta:FlightMeta) -> str:
     destination = flightMeta.DerivedDestination or "N/A"
     waypoints = flightMeta.RouteWaypoints or "N/A"
 
+    startTime = flightMeta.StartTime
+    endTime = flightMeta.EndTime
+    ymd = toYMD(startTime) if startTime is not None else "N/A"
+    startHM = toHM(startTime) if startTime is not None else "--:--"
+    endHM = toHM(endTime) if endTime is not None else "--:--"
+
     clientLine = ''
     deviceInfo = flightMeta.DeviceDetails or flightMeta.DeviceModel
     if deviceInfo:
@@ -520,12 +564,12 @@ def flightSummary(flightMeta:FlightMeta) -> str:
     if flightMeta.ImportedFrom and flightMeta.ImportedFrom != 'iOS':
         importedLine = f"\nImported: {flightMeta.ImportedFrom}"
 
-    heading = f"{flightMeta.TailNumber} - {toYMD(flightMeta.StartTime)}{distance}{pilot} ({hoursMinutes[0]} hours and {hoursMinutes[1]} minutes)"
+    heading = f"{flightMeta.TailNumber} - {ymd}{distance}{pilot} ({hoursMinutes[0]} hours and {hoursMinutes[1]} minutes)"
     underline = '\n'+ ('-' * len(heading))
 
     return f'''{heading}{underline}
-    From: {toHM(flightMeta.StartTime)}Z {origin} ({flightMeta.StartLatitude}, {flightMeta.StartLongitude})
-      To: {toHM(flightMeta.EndTime)}Z {destination} ({flightMeta.EndLatitude}, {flightMeta.EndLongitude})
+    From: {startHM}Z {origin} ({flightMeta.StartLatitude}, {flightMeta.StartLongitude})
+      To: {endHM}Z {destination} ({flightMeta.EndLatitude}, {flightMeta.EndLongitude})
  Planned: {waypoints}
 GPS/AHRS: {flightMeta.GPSSource}''' + clientLine + importedLine
 
@@ -601,7 +645,7 @@ def fdrDrefs(drefDefines:List[str]):
     return 'DREF, ' + '\nDREF, '.join(drefDefines) +'\n'
 
 
-def fdrColNames(drefNames:List[str]):
+def fdrColNames(drefNames:Iterable[str]):
     names = '''COMM,                        degrees,             degrees,              ft msl,                 deg,                 deg,                 deg
 COMM,                      Longitude,            Latitude,              AltMSL,             Heading,               Pitch,                Roll'''
 
@@ -611,39 +655,26 @@ COMM,                      Longitude,            Latitude,              AltMSL, 
     return names +'\n'
 
 
-def getOutpath(config:Config, inPath:str, fdrFlight:FdrFlight):
-    filename = os.path.basename(inPath)
-    outPath = config.outPath or '.'
-    return Path(os.path.join(outPath, filename)).with_suffix('.fdr')
+def timezoneOffsetSeconds(s: str) -> float:
+    """Offset from local time to Zulu, in seconds (added to timestamps).
 
-
-def secondsFromString(timezone:str):
-    seconds = 0
-
-    timezone = numberOrString(timezone)
-    if isinstance(timezone, (float, int)):
-        seconds = timezone * 3600
-    elif isinstance(timezone, str):
-        indexAfterSign = int(timezone[0] in ['+','-'])
-        zone = timezone[indexAfterSign:].split(':')
-
-        seconds = float(zone.pop())
-        seconds += float(zone.pop()) * 60
-        if len(zone):
-            seconds += float(zone.pop()) * 3600
-        else:
-            seconds *= 60
-
-        seconds *= -1 if timezone[0] == '-' else 1
-
-    return seconds
-
-
-def numberOrString(numeric:str):
-    if re.sub('^[+-]', '', re.sub('\\.', '', numeric)).isnumeric():
-        return float(numeric)
+    Accepts decimal hours (e.g. ``3``, ``-5.5``) or ``+/-hh:mm[:ss]`` as in the README.
+    """
+    s = s.strip()
+    if not s:
+        return 0.0
+    if ':' not in s:
+        return float(s) * 3600
+    indexAfterSign = int(s[0] in ['+', '-'])
+    zone = s[indexAfterSign:].split(':')
+    seconds = float(zone.pop())
+    seconds += float(zone.pop()) * 60
+    if len(zone):
+        seconds += float(zone.pop()) * 3600
     else:
-        return numeric
+        seconds *= 60
+    seconds *= -1 if s[0] == '-' else 1
+    return seconds
 
 
 def wrapHeading(degrees:float):
@@ -661,7 +692,7 @@ def wrapAttitude(degrees:float):
         return degrees
 
 
-def toMDY(time:Union[datetime,int,str]):
+def toMDY(time:Union[datetime,date,int,str]):
     if isinstance(time, str):
         time = int(time)
     if isinstance(time, int):
