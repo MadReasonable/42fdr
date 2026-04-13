@@ -49,6 +49,7 @@ class Config():
     offsetDest: Optional[CardinalOffset] = None
 
     file:Optional[configparser.RawConfigParser] = None
+    configuredWaypointOffsets: List["AirportOffsetEntry"]
 
     OFFSET_INNER_RADIUS_NM = 2.0
     OFFSET_OUTER_RADIUS_NM = 8.0
@@ -57,6 +58,8 @@ class Config():
         r'([+-]?(?:\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)\s*,\s*'
         r'([+-]?(?:\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)\s*$'
     )
+    _AIRCRAFT_TAIL_SECTION_PREFIX = 'aircraft '
+    _WAYPOINT_SECTION_PREFIX = 'waypoint '
 
 
     def __init__(self, cliArgs:argparse.Namespace):
@@ -89,49 +92,54 @@ class Config():
         elif 'outpath' in defaults:
             self.outPath = defaults['outpath']
 
-        if cliArgs.offset_orig:
-            self.offsetOrig = self.parseOffset(cliArgs.offset_orig)
-        if cliArgs.offset_dest:
-            self.offsetDest = self.parseOffset(cliArgs.offset_dest)
+        self.configuredWaypointOffsets = self._loadWaypoints()
+        if cliArgs.offsetOrig:
+            self.offsetOrig = self.parseOffset(cliArgs.offsetOrig)
+        if cliArgs.offsetDest:
+            self.offsetDest = self.parseOffset(cliArgs.offsetDest)
 
 
     def airportOffsetsForFlight(
         self,
-        flightMeta: Optional["FlightMeta"],
-        trackData: List[Dict[str, Any]],
+        flight: "FdrFlight",
     ) -> "AirportOffsetHelper":
         helper = AirportOffsetHelper()
-        first_lat, first_lon, last_lat, last_lon = firstLastTrackPosition(trackData)
 
-        if first_lat is None and flightMeta and flightMeta.StartLatitude is not None and flightMeta.StartLongitude is not None:
-            first_lat = float(flightMeta.StartLatitude)
-            first_lon = float(flightMeta.StartLongitude)
-        if last_lat is None and flightMeta and flightMeta.EndLatitude is not None and flightMeta.EndLongitude is not None:
-            last_lat = float(flightMeta.EndLatitude)
-            last_lon = float(flightMeta.EndLongitude)
-
-        if self.offsetOrig is not None and first_lat is not None and first_lon is not None:
-            offset = self.offsetOrig
-            code = (flightMeta.DerivedOrigin if flightMeta and flightMeta.DerivedOrigin else "ORIG").strip() or "ORIG"
-            helper.add_airport(
-                code=code,
-                lat_deg=first_lat,
-                lon_deg=first_lon,
-                offset=offset,
-                inner_radius_nm=self.OFFSET_INNER_RADIUS_NM,
-                outer_radius_nm=self.OFFSET_OUTER_RADIUS_NM,
+        for entry in self.configuredWaypointOffsets:
+            helper.addAirport(
+                code=entry.code,
+                lattitude=entry.lattitude,
+                longitude=entry.longitude,
+                offset=entry.offset,
+                innerRadiusNm=entry.innerRadiusNm,
+                outerRadiusNm=entry.outerRadiusNm,
             )
 
-        if self.offsetDest is not None and last_lat is not None and last_lon is not None:
+        flightMeta = flight.metaData
+        trackData = flight.trackData
+        firstLat, firstLon, lastLat, lastLon = firstLastTrackPosition(trackData)
+
+        if self.offsetOrig is not None and firstLat is not None and firstLon is not None:
+            offset = self.offsetOrig
+            code = (flightMeta.DerivedOrigin if flightMeta and flightMeta.DerivedOrigin else "ORIG").strip() or "ORIG"
+            helper.addAirport(
+                code=code,
+                lattitude=firstLat,
+                longitude=firstLon,
+                offset=offset,
+                innerRadiusNm=self.OFFSET_INNER_RADIUS_NM,
+                outerRadiusNm=self.OFFSET_OUTER_RADIUS_NM,
+            )
+        if self.offsetDest is not None and lastLat is not None and lastLon is not None:
             offset = self.offsetDest
             code = (flightMeta.DerivedDestination if flightMeta and flightMeta.DerivedDestination else "DEST").strip() or "DEST"
-            helper.add_airport(
+            helper.addAirport(
                 code=code,
-                lat_deg=last_lat,
-                lon_deg=last_lon,
+                lattitude=lastLat,
+                longitude=lastLon,
                 offset=offset,
-                inner_radius_nm=self.OFFSET_INNER_RADIUS_NM,
-                outer_radius_nm=self.OFFSET_OUTER_RADIUS_NM,
+                innerRadiusNm=self.OFFSET_INNER_RADIUS_NM,
+                outerRadiusNm=self.OFFSET_OUTER_RADIUS_NM,
             )
 
         return helper
@@ -207,9 +215,12 @@ class Config():
         # Always include the default ground speed DREF
         add('sim/cockpit2/gauges/indicators/ground_speed_kt', 'round({Speed}, 4)', '1.0', 'GndSpd')
 
+        tailSection = self._aircraftTailSectionForTail(tailNumber)
         fromSection('Defaults')
         fromSection(self.acftByTail(tailNumber))
         fromSection(tailNumber)
+        if tailSection is not None:
+            fromSection(tailSection)
 
         return sources, defines
 
@@ -217,6 +228,7 @@ class Config():
     _TAIL_TRIM_KEYS = frozenset[str]({'headingtrim', 'pitchtrim', 'rolltrim'})
     def tail(self, tailNumber:str):
         tailConfig = {}
+        aircraftTailSectionName = self._aircraftTailSectionForTail(tailNumber)
         if self.file:
             for section in self.file.sections():
                 if section.lower() == tailNumber.lower():
@@ -229,6 +241,15 @@ class Config():
                             tailConfig[key] = valueString
                     break
 
+            if aircraftTailSectionName is not None:
+                section = self.file[aircraftTailSectionName]
+                for key in section:
+                    valueString = section[key]
+                    if key.lower() in self._TAIL_TRIM_KEYS:
+                        tailConfig[key] = float(valueString)
+                    else:
+                        tailConfig[key] = valueString
+
         if 'headingtrim' not in tailConfig:
             tailConfig['headingtrim'] = 0
         if 'pitchtrim' not in tailConfig:
@@ -237,6 +258,103 @@ class Config():
             tailConfig['rolltrim'] = 0
 
         return tailConfig
+
+
+    def _aircraftTailSectionForTail(self, tailNumber: str) -> Optional[str]:
+        if not self.file:
+            return None
+
+        match = f'{self._AIRCRAFT_TAIL_SECTION_PREFIX}{tailNumber}'.lower()
+        for section in self.file.sections():
+            if section.lower() == match:
+                return section
+        return None
+
+
+    def _loadWaypoints(self) -> List["AirportOffsetEntry"]:
+        entries: List["AirportOffsetEntry"] = []
+        if not self.file:
+            return entries
+
+        for section in self.file.sections():
+            if not section.lower().startswith(self._WAYPOINT_SECTION_PREFIX):
+                continue
+
+            waypointName = section[len(self._WAYPOINT_SECTION_PREFIX):].strip()
+            if not waypointName:
+                self._warnConfig(f"Ignoring [{section}] because it does not include a waypoint name.")
+                continue
+
+            sectionData = self.file[section]
+            latRaw = sectionData.get('lat')
+            lonRaw = sectionData.get('lon')
+            offsetRaw = sectionData.get('offset')
+
+            if latRaw is None or lonRaw is None:
+                self._warnConfig(f"Skipping [{section}] because both lat and lon are required in phase 1.")
+                continue
+            if offsetRaw is None:
+                self._warnConfig(f"Skipping [{section}] because offset is required.")
+                continue
+
+            try:
+                lat = float(latRaw)
+                lon = float(lonRaw)
+            except ValueError:
+                self._warnConfig(f"Skipping [{section}] because lat/lon must be numeric.")
+                continue
+
+            try:
+                offset = self.parseOffset(offsetRaw)
+            except ValueError as err:
+                self._warnConfig(f"Skipping [{section}] because offset is invalid: {err}")
+                continue
+
+            innerRadiusNm = self._parseWaypointRadius(
+                sectionName=section,
+                key='innerradiusnm',
+                defaultValue=self.OFFSET_INNER_RADIUS_NM,
+            )
+            outerRadiusNm = self._parseWaypointRadius(
+                sectionName=section,
+                key='outerradiusnm',
+                defaultValue=self.OFFSET_OUTER_RADIUS_NM,
+            )
+
+            entries.append(
+                AirportOffsetEntry(
+                    code=waypointName,
+                    lattitude=lat,
+                    longitude=lon,
+                    offset=offset,
+                    innerRadiusNm=innerRadiusNm,
+                    outerRadiusNm=outerRadiusNm,
+                )
+            )
+
+        return entries
+
+
+    def _parseWaypointRadius(self, sectionName: str, key: str, defaultValue: float) -> float:
+        if not self.file or sectionName not in self.file:
+            return defaultValue
+
+        valueRaw = self.file[sectionName].get(key)
+        if valueRaw is None:
+            return defaultValue
+
+        try:
+            return float(valueRaw)
+        except ValueError:
+            self._warnConfig(
+                f"Ignoring invalid {key} value in [{sectionName}]: {valueRaw!r}. Using default {defaultValue}."
+            )
+            return defaultValue
+
+
+    @staticmethod
+    def _warnConfig(message: str) -> None:
+        print(f"Config warning: {message}", file=sys.stderr)
 
 
     def findConfigFile(self, cliPath:str):
@@ -297,27 +415,27 @@ class FlightMeta():
 
 class AirportOffsetEntry:
     code: str
-    lat_deg: float
-    lon_deg: float
+    lattitude: float
+    longitude: float
     offset: CardinalOffset
-    inner_radius_nm: float
-    outer_radius_nm: float
+    innerRadiusNm: float
+    outerRadiusNm: float
 
     def __init__(
         self,
         code: str,
-        lat_deg: float,
-        lon_deg: float,
+        lattitude: float,
+        longitude: float,
         offset: CardinalOffset,
-        inner_radius_nm: float,
-        outer_radius_nm: float,
+        innerRadiusNm: float,
+        outerRadiusNm: float,
     ):
         self.code = code
-        self.lat_deg = lat_deg
-        self.lon_deg = lon_deg
+        self.lattitude = lattitude
+        self.longitude = longitude
         self.offset = offset
-        self.inner_radius_nm = max(0.0, inner_radius_nm)
-        self.outer_radius_nm = max(self.inner_radius_nm, outer_radius_nm)
+        self.innerRadiusNm = max(0.0, innerRadiusNm)
+        self.outerRadiusNm = max(self.innerRadiusNm, outerRadiusNm)
 
 
 class AirportOffsetHelper:
@@ -328,23 +446,23 @@ class AirportOffsetHelper:
         self._entries = []
 
 
-    def add_airport(
+    def addAirport(
         self,
         code: str,
-        lat_deg: float,
-        lon_deg: float,
+        lattitude: float,
+        longitude: float,
         offset: CardinalOffset,
-        inner_radius_nm: float,
-        outer_radius_nm: float,
+        innerRadiusNm: float,
+        outerRadiusNm: float,
     ) -> None:
         self._entries.append(
             AirportOffsetEntry(
                 code=code,
-                lat_deg=lat_deg,
-                lon_deg=lon_deg,
+                lattitude=lattitude,
+                longitude=longitude,
                 offset=offset,
-                inner_radius_nm=inner_radius_nm,
-                outer_radius_nm=outer_radius_nm,
+                innerRadiusNm=innerRadiusNm,
+                outerRadiusNm=outerRadiusNm,
             )
         )
 
@@ -357,74 +475,74 @@ class AirportOffsetHelper:
 
 
     def _offsetFeetForPosition(self, lattitude: float, longitude: float) -> Optional[CardinalOffset]:
-        inner_matches: List[Tuple[float, AirportOffsetEntry]] = []
-        outer_matches: List[Tuple[float, AirportOffsetEntry]] = []
+        innerMatches: List[Tuple[float, AirportOffsetEntry]] = []
+        outerMatches: List[Tuple[float, AirportOffsetEntry]] = []
 
         for entry in self._entries:
-            distance_nm = greatCircleDistanceNm(lattitude, longitude, entry.lat_deg, entry.lon_deg)
-            if distance_nm <= entry.inner_radius_nm:
-                inner_matches.append((distance_nm, entry))
-            elif distance_nm <= entry.outer_radius_nm:
-                outer_matches.append((distance_nm, entry))
+            distanceNm = greatCircleDistanceNm(lattitude, longitude, entry.lattitude, entry.longitude)
+            if distanceNm <= entry.innerRadiusNm:
+                innerMatches.append((distanceNm, entry))
+            elif distanceNm <= entry.outerRadiusNm:
+                outerMatches.append((distanceNm, entry))
 
-        if inner_matches:
-            center_distances = [distance_nm for distance_nm, _ in inner_matches]
-            blend_weights = self._inverseRatioWeights(center_distances)
-            total_weight = 0.0
-            east_sum = 0.0
-            north_sum = 0.0
-            up_sum = 0.0
-            for weight, (_, entry) in zip(blend_weights, inner_matches):
-                total_weight += weight
-                east_sum += entry.offset.eastFt * weight
-                north_sum += entry.offset.northFt * weight
-                up_sum += entry.offset.upFt * weight
-            if total_weight > 0:
+        if innerMatches:
+            centerDistances = [distanceNm for distanceNm, _ in innerMatches]
+            blendWeights = self._inverseRatioWeights(centerDistances)
+            totalWeight = 0.0
+            eastSum = 0.0
+            northSum = 0.0
+            upSum = 0.0
+            for weight, (_, entry) in zip(blendWeights, innerMatches):
+                totalWeight += weight
+                eastSum += entry.offset.eastFt * weight
+                northSum += entry.offset.northFt * weight
+                upSum += entry.offset.upFt * weight
+            if totalWeight > 0:
                 return CardinalOffset(
-                    eastFt=east_sum / total_weight,
-                    northFt=north_sum / total_weight,
-                    upFt=up_sum / total_weight,
+                    eastFt=eastSum / totalWeight,
+                    northFt=northSum / totalWeight,
+                    upFt=upSum / totalWeight,
                 )
             return None
 
-        if outer_matches:
-            inner_edge_distances: List[float] = []
-            local_offsets: List[CardinalOffset] = []
-            for distance_nm, entry in outer_matches:
-                ring_width_nm = entry.outer_radius_nm - entry.inner_radius_nm
-                if ring_width_nm <= 0:
+        if outerMatches:
+            innerEdgeDistances: List[float] = []
+            localOffsets: List[CardinalOffset] = []
+            for distanceNm, entry in outerMatches:
+                ringWidthNm = entry.outerRadiusNm - entry.innerRadiusNm
+                if ringWidthNm <= 0:
                     continue
-                local_weight = (entry.outer_radius_nm - distance_nm) / ring_width_nm
-                local_weight = max(0.0, min(1.0, local_weight))
-                if local_weight <= 0:
+                localWeight = (entry.outerRadiusNm - distanceNm) / ringWidthNm
+                localWeight = max(0.0, min(1.0, localWeight))
+                if localWeight <= 0:
                     continue
-                inner_edge_distances.append(max(0.0, distance_nm - entry.inner_radius_nm))
-                local_offsets.append(
+                innerEdgeDistances.append(max(0.0, distanceNm - entry.innerRadiusNm))
+                localOffsets.append(
                     CardinalOffset(
-                        eastFt=entry.offset.eastFt * local_weight,
-                        northFt=entry.offset.northFt * local_weight,
-                        upFt=entry.offset.upFt * local_weight,
+                        eastFt=entry.offset.eastFt * localWeight,
+                        northFt=entry.offset.northFt * localWeight,
+                        upFt=entry.offset.upFt * localWeight,
                     )
                 )
 
-            if not local_offsets:
+            if not localOffsets:
                 return None
 
-            blend_weights = self._inverseRatioWeights(inner_edge_distances)
-            total_weight = 0.0
-            east_sum = 0.0
-            north_sum = 0.0
-            up_sum = 0.0
-            for weight, local_offset in zip(blend_weights, local_offsets):
-                total_weight += weight
-                east_sum += local_offset.eastFt * weight
-                north_sum += local_offset.northFt * weight
-                up_sum += local_offset.upFt * weight
-            if total_weight > 0:
+            blendWeights = self._inverseRatioWeights(innerEdgeDistances)
+            totalWeight = 0.0
+            eastSum = 0.0
+            northSum = 0.0
+            upSum = 0.0
+            for weight, localOffset in zip(blendWeights, localOffsets):
+                totalWeight += weight
+                eastSum += localOffset.eastFt * weight
+                northSum += localOffset.northFt * weight
+                upSum += localOffset.upFt * weight
+            if totalWeight > 0:
                 return CardinalOffset(
-                    eastFt=east_sum / total_weight,
-                    northFt=north_sum / total_weight,
-                    upFt=up_sum / total_weight,
+                    eastFt=eastSum / totalWeight,
+                    northFt=northSum / totalWeight,
+                    upFt=upSum / totalWeight,
                 )
 
         return None
@@ -435,22 +553,22 @@ class AirportOffsetHelper:
         if not distances:
             return []
         epsilon = 1e-12
-        zero_distance_indexes = [i for i, distance in enumerate(distances) if distance <= epsilon]
-        if zero_distance_indexes:
-            dominant_weight = 1.0 / len(zero_distance_indexes)
-            return [dominant_weight if i in zero_distance_indexes else 0.0 for i in range(len(distances))]
+        zeroDistanceIndexes = [i for i, distance in enumerate(distances) if distance <= epsilon]
+        if zeroDistanceIndexes:
+            dominantWeight = 1.0 / len(zeroDistanceIndexes)
+            return [dominantWeight if i in zeroDistanceIndexes else 0.0 for i in range(len(distances))]
 
-        longest_distance = max(distances)
-        if longest_distance <= epsilon:
-            uniform_weight = 1.0 / len(distances)
-            return [uniform_weight for _ in distances]
+        longestDistance = max(distances)
+        if longestDistance <= epsilon:
+            uniformWeight = 1.0 / len(distances)
+            return [uniformWeight for _ in distances]
 
-        raw_weights = [longest_distance / distance for distance in distances]
-        total_raw_weight = sum(raw_weights)
-        if total_raw_weight <= epsilon:
-            uniform_weight = 1.0 / len(distances)
-            return [uniform_weight for _ in distances]
-        return [weight / total_raw_weight for weight in raw_weights]
+        rawWeights = [longestDistance / distance for distance in distances]
+        totalRawWeight = sum(rawWeights)
+        if totalRawWeight <= epsilon:
+            uniformWeight = 1.0 / len(distances)
+            return [uniformWeight for _ in distances]
+        return [weight / totalRawWeight for weight in rawWeights]
 
 
     @staticmethod
@@ -498,7 +616,7 @@ class FdrTrackPoint():
         self.offset = offset
 
 
-    def outputPosition(self) -> Tuple[float, float, float]:
+    def renderPosition(self) -> Tuple[float, float, float]:
         if self.offset is None:
             return (self.LONG, self.LAT, self.ALTMSL)
         return (
@@ -544,7 +662,7 @@ class FdrFlight():
         meta = self.metaData or FlightMeta()
         tailConfig = config.tail(self.TAIL)
         drefSources, _ = config.drefsByTail(self.TAIL)
-        airportOffsets = config.airportOffsetsForFlight(self.metaData, self.trackData)
+        airportOffsets = config.airportOffsetsForFlight(self)
 
         for trackData in self.trackData:
             baseLong = float(trackData['Longitude'])
@@ -668,8 +786,8 @@ def main(argv:List[str]):
     parser.add_argument('-c', '--config', default=None, help='Path to 42fdr config file')
     parser.add_argument('-t', '--timezone', default=None, help='An offset to add to all times processed.  +/-hh:mm[:ss] or +/-<decimal hours>')
     parser.add_argument('-o', '--outputFolder', default=None, dest='outputFolder', help='Path to write X-Plane compatible FDR v4 output file')
-    parser.add_argument('--oo', default=None, dest='offset_orig', metavar='EAST,NORTH,UP', help='Position offset at origin airport in feet: east, north, up. Use with --od for airport-aware blending.')
-    parser.add_argument('--od', default=None, dest='offset_dest', metavar='EAST,NORTH,UP', help='Position offset at destination airport in feet; same format as --oo')
+    parser.add_argument('--oo', default=None, dest='offsetOrig', metavar='EAST,NORTH,UP', help='Position offset at origin airport in feet: east, north, up. Use with --od for airport-aware blending.')
+    parser.add_argument('--od', default=None, dest='offsetDest', metavar='EAST,NORTH,UP', help='Position offset at destination airport in feet; same format as --oo')
     parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV, KML)')
     args = parser.parse_args()
     
@@ -966,7 +1084,7 @@ def writeOutputFile(config:Config, fdrFile:TextIO, fdrFlight:FdrFlight):
     ])
 
     for point in fdrFlight.track:
-        outLong, outLat, outAltMSL = point.outputPosition()
+        outLong, outLat, outAltMSL = point.renderPosition()
         time    = point.TIME.strftime('%H:%M:%S.%f')
         long    = str.rjust(str(fdrFlight.roundLatLong(outLong)), FdrColumnWidth)
         lat     = str.rjust(str(fdrFlight.roundLatLong(outLat)), FdrColumnWidth)

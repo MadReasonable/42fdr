@@ -122,7 +122,7 @@ You can also specify a custom config file location from the command line.
 
 An example configuration is provided with the name `42fdr.conf.example`.
 Make a copy or rename it, then edit it as needed.
-One `[Defaults]` section and as many `[<Aircraft/*>]` and `[<Tail>]` sections as needed are supported.
+One `[Defaults]` section and as many `[<Aircraft/*>]`, `[Aircraft <Tail>]`, and `[Waypoint <Name>]` sections as needed are supported.
 
 
 ### 42fdr.conf example:
@@ -147,10 +147,18 @@ DREF sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = {ROLL}, 1.0, Vacuum 
 DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, Barometer
 
 
-[N123ND]
+[Aircraft N123ND]
 headingTrim = 0.03
 pitchTrim   = -0.01
 rollTrim    = 0.0
+
+
+[Waypoint KJFK]
+lat = 40.6413
+lon = -73.7781
+offset = 8.0,-2.5,4.0
+innerRadiusNm = 2.0
+outerRadiusNm = 8.0
 ```
 <br/>
 
@@ -163,10 +171,10 @@ To get instruments like the airspeed indicator and artificial horizon working, a
 `DREF` keys allow you to add additional fields to the output FDR file.
 ForeFlight only provides basic position, attitude, and ground speed. This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)`, and to compute new values `(e.g. round({Pitch}, 3))`.
 
-You can define custom DREFs in any section:
+You can define custom DREFs in most sections:
 - `[Defaults]` — applies to all flights
 - `[Aircraft/...]` — applies to flights using that aircraft model
-- `[Tail]` — applies to flights from that specific tail number
+- `[Aircraft <Tail>]` — applies to flights from that specific tail number
 
 <br/> 
 
@@ -219,15 +227,30 @@ A single key is supported, `Tails`, which can be used to list all tail numbers w
 DREFs defined in this section will be included in FDR files generated for this aircraft model.  
 <br/>
 
-### [\<Tail>] Sections
+### [Aircraft \<Tail>] Sections
 ---
-\<Tail> sections allow for correction of attitude information in the flight track.
-\<Tail> section names are just airplane registration numbers `(e.g. N1234X)`.
+`[Aircraft <Tail>]` sections allow correction of attitude information in the flight track.
+Use the aircraft registration after `Aircraft` in the section name `(e.g. [Aircraft N1234X])`.
+Legacy `[<Tail>]` sections without the "Aircraft" prefix are still supported for backwards compatibility.
 
 These sections support:
 - `headingTrim`, `pitchTrim`, `rollTrim` — These offsets will be added to attitude data for every track point.
 
 DREFs defined in this section will be included in FDR files generated for this specific tail number.
+
+<br/>
+
+### [Waypoint \<Name>] Sections
+---
+`[Waypoint <Name>]` sections define position-based replay offsets that can be used for airports or any custom location.
+
+These sections support:
+- `lat`, `lon` — waypoint center in decimal degrees
+- `offset` — offset in feet: `east,north,up`
+- `innerRadiusNm`, `outerRadiusNm` (optional) — blending radii in nautical miles (defaults are 2 and 8)
+
+Phase 1 note:
+- If a waypoint is missing `lat`, `lon`, or `offset`, 42fdr skips that waypoint and prints a config warning.
 
 <br/>
 
