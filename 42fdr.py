@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-import argparse, configparser, csv, os, re, sys, xml.etree.ElementTree as ET
+import argparse, configparser, csv, os, re, sys, tempfile, xml.etree.ElementTree as ET
 import math  # Used when evaluating user DREF value expressions
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, TextIO, Tuple, Union
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 
 FdrColumnWidth = 19
@@ -39,6 +41,89 @@ class GeodeticOffset:
         self.deltaAltitude = deltaAltitude
 
 
+class BoundingBox:
+    minLat: float
+    maxLat: float
+    minLon: float
+    maxLon: float
+
+    def __init__(self, latitude: float, longitude: float):
+        self.minLat = latitude
+        self.maxLat = latitude
+        self.minLon = longitude
+        self.maxLon = longitude
+
+    def include(self, latitude: float, longitude: float) -> None:
+        self.minLat = min(self.minLat, latitude)
+        self.maxLat = max(self.maxLat, latitude)
+        self.minLon = min(self.minLon, longitude)
+        self.maxLon = max(self.maxLon, longitude)
+
+    def contains(self, latitude: float, longitude: float, marginNm: float = 0.0) -> bool:
+        latMargin = marginNm / 60.0
+        lonMargin = longitudeDegreesForNm(marginNm, latitude)
+        return (
+            self.minLat - latMargin <= latitude <= self.maxLat + latMargin
+            and self.minLon - lonMargin <= longitude <= self.maxLon + lonMargin
+        )
+
+
+class WaypointEntry:
+    code: str
+    offset: "CardinalOffset"
+    innerRadiusNm: float
+    outerRadiusNm: float
+    lattitude: Optional[float]
+    longitude: Optional[float]
+
+    def __init__(
+        self,
+        code: str,
+        offset: "CardinalOffset",
+        innerRadiusNm: float,
+        outerRadiusNm: float,
+        lattitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ):
+        self.code = code
+        self.offset = offset
+        self.innerRadiusNm = max(0.0, innerRadiusNm)
+        self.outerRadiusNm = max(self.innerRadiusNm, outerRadiusNm)
+        self.lattitude = lattitude
+        self.longitude = longitude
+
+    def hasCoordinates(self) -> bool:
+        return self.lattitude is not None and self.longitude is not None
+
+
+class OurAirportsRecord:
+    ident: str
+    gpsCode: str
+    localCode: str
+    iataCode: str
+    name: str
+    lattitude: float
+    longitude: float
+
+    def __init__(
+        self,
+        ident: str,
+        gpsCode: str,
+        localCode: str,
+        iataCode: str,
+        name: str,
+        lattitude: float,
+        longitude: float,
+    ):
+        self.ident = ident
+        self.gpsCode = gpsCode
+        self.localCode = localCode
+        self.iataCode = iataCode
+        self.name = name
+        self.lattitude = lattitude
+        self.longitude = longitude
+
+
 class Config():
     aircraft:str = 'Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf'
     outPath:str = '.'
@@ -49,10 +134,19 @@ class Config():
     offsetDest: Optional[CardinalOffset] = None
 
     file:Optional[configparser.RawConfigParser] = None
-    configuredWaypointOffsets: List["AirportOffsetEntry"]
+    configuredWaypoints: List["WaypointEntry"]
+    airfieldDbPath: Optional[Path]
+    airfieldDbEnabled: bool
+    airfieldDbMaxAgeDays: float
+    airfieldGridCellNm: float
+    _airfieldRecords: Optional[List["OurAirportsRecord"]]
 
     OFFSET_INNER_RADIUS_NM = 2.0
     OFFSET_OUTER_RADIUS_NM = 8.0
+    AIRFIELD_DB_DEFAULT_FILENAME = 'OurAirports.csv'
+    AIRFIELD_DB_DEFAULT_MAX_AGE_DAYS = 90.0
+    AIRFIELD_DB_URL = 'https://davidmegginson.github.io/ourairports-data/airports.csv'
+    AIRFIELD_GRID_CELL_DEFAULT_NM = 120.0
     _XYZ_OFFSET_RE = re.compile(
         r'^\s*([+-]?(?:\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)\s*,\s*'
         r'([+-]?(?:\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)\s*,\s*'
@@ -88,24 +182,47 @@ class Config():
                 self.timezoneKML = timezoneOffsetSeconds(defaults['timezonekml'])
 
         if cliArgs.outputFolder:
-            self.outPath = cliArgs.outputFolder
+            self.outPath = os.path.expanduser(cliArgs.outputFolder)
         elif 'outpath' in defaults:
-            self.outPath = defaults['outpath']
+            self.outPath = os.path.expanduser(defaults['outpath'])
 
-        self.configuredWaypointOffsets = self._loadWaypoints()
+        self.airfieldDbEnabled = cliArgs.airfieldDB is not None
+        self.airfieldDbPath = self._resolveAirfieldDbPath(cliArgs.airfieldDB) if self.airfieldDbEnabled else None
+        self.airfieldDbMaxAgeDays = self._getFloatDefault(
+            defaults=defaults,
+            key='airfielddbmaxagedays',
+            fallback=self.AIRFIELD_DB_DEFAULT_MAX_AGE_DAYS,
+            minimum=0.0,
+            warningPrefix='airfielddbmaxagedays',
+            legacyKey='airportdbmaxagedays',
+        )
+        self.airfieldGridCellNm = self._getFloatDefault(
+            defaults=defaults,
+            key='airfieldgridcellnm',
+            fallback=self.AIRFIELD_GRID_CELL_DEFAULT_NM,
+            minimum=1.0,
+            warningPrefix='airfieldgridcellnm',
+        )
+        self._airfieldRecords = None
+
+        self.configuredWaypoints = self._loadWaypoints()
         if cliArgs.offsetOrig:
             self.offsetOrig = self.parseOffset(cliArgs.offsetOrig)
         if cliArgs.offsetDest:
             self.offsetDest = self.parseOffset(cliArgs.offsetDest)
 
 
-    def airportOffsetsForFlight(
+    def offsetHelperForFlight(
         self,
         flight: "FdrFlight",
+        boundingBoxes: List["BoundingBox"],
     ) -> "AirportOffsetHelper":
         helper = AirportOffsetHelper()
+        candidateAirfields = self._prefilterAirfieldsForFlight(boundingBoxes)
 
-        for entry in self.configuredWaypointOffsets:
+        for entry in self._resolvedWaypointsForFlight(boundingBoxes, candidateAirfields):
+            if entry.lattitude is None or entry.longitude is None:
+                continue
             helper.addAirport(
                 code=entry.code,
                 lattitude=entry.lattitude,
@@ -115,9 +232,13 @@ class Config():
                 outerRadiusNm=entry.outerRadiusNm,
             )
 
+        self._addCliAirportOffsets(helper, flight)
+        return helper
+
+
+    def _addCliAirportOffsets(self, helper: "AirportOffsetHelper", flight: "FdrFlight") -> None:
         flightMeta = flight.metaData
-        trackData = flight.trackData
-        firstLat, firstLon, lastLat, lastLon = firstLastTrackPosition(trackData)
+        firstLat, firstLon, lastLat, lastLon = firstLastTrackPosition(flight.trackData)
 
         if self.offsetOrig is not None and firstLat is not None and firstLon is not None:
             offset = self.offsetOrig
@@ -142,7 +263,212 @@ class Config():
                 outerRadiusNm=self.OFFSET_OUTER_RADIUS_NM,
             )
 
-        return helper
+
+    def _resolvedWaypointsForFlight(
+        self,
+        boundingBoxes: List["BoundingBox"],
+        candidateAirfields: List["OurAirportsRecord"],
+    ) -> List["WaypointEntry"]:
+        entries: List[WaypointEntry] = []
+        lookupMap = self._airfieldLookupMap(candidateAirfields)
+
+        for waypoint in self.configuredWaypoints:
+            resolved = self._resolveWaypoint(waypoint, lookupMap)
+            if resolved is None or resolved.lattitude is None or resolved.longitude is None:
+                continue
+            if not self._isInFlightBounds(resolved.lattitude, resolved.longitude, boundingBoxes, resolved.outerRadiusNm):
+                continue
+            entries.append(resolved)
+        return entries
+
+
+    def _resolveWaypoint(
+        self,
+        waypoint: "WaypointEntry",
+        lookupMap: Dict[str, "OurAirportsRecord"],
+    ) -> Optional["WaypointEntry"]:
+        if waypoint.hasCoordinates():
+            return waypoint
+
+        if not self.airfieldDbEnabled:
+            self._warnConfig(f"Skipping [Waypoint {waypoint.code}] because lat/lon are required unless --airfieldDB is enabled.")
+            return None
+
+        record = lookupMap.get(waypoint.code.upper())
+        if record is None:
+            self._warnConfig(
+                f"Skipping [Waypoint {waypoint.code}] because no matching airfield was found in {self.airfieldDbPath}."
+            )
+            return None
+        return WaypointEntry(
+            code=waypoint.code,
+            offset=waypoint.offset,
+            innerRadiusNm=waypoint.innerRadiusNm,
+            outerRadiusNm=waypoint.outerRadiusNm,
+            lattitude=record.lattitude,
+            longitude=record.longitude,
+        )
+
+
+    @staticmethod
+    def _isInFlightBounds(latitude: float, longitude: float, boundingBoxes: List["BoundingBox"], radiusNm: float) -> bool:
+        if not boundingBoxes:
+            return True
+        for box in boundingBoxes:
+            if box.contains(latitude, longitude, marginNm=radiusNm):
+                return True
+        return False
+
+
+    def _airfieldLookupMap(self, records: List["OurAirportsRecord"]) -> Dict[str, "OurAirportsRecord"]:
+        lookup: Dict[str, OurAirportsRecord] = {}
+        for record in records:
+            for key in [record.ident, record.gpsCode, record.localCode, record.iataCode]:
+                normalized = key.strip().upper()
+                if normalized and normalized not in lookup:
+                    lookup[normalized] = record
+        return lookup
+
+
+    def _prefilterAirfieldsForFlight(self, boundingBoxes: List["BoundingBox"]) -> List["OurAirportsRecord"]:
+        records = self._loadAirfieldRecords()
+        if not records:
+            return []
+        if not boundingBoxes:
+            return records
+
+        maxOuterRadius = max(
+            [self.OFFSET_OUTER_RADIUS_NM]
+            + [waypoint.outerRadiusNm for waypoint in self.configuredWaypoints]
+        )
+        return [
+            record for record in records
+            if self._isInFlightBounds(record.lattitude, record.longitude, boundingBoxes, maxOuterRadius)
+        ]
+
+
+    def _loadAirfieldRecords(self) -> List["OurAirportsRecord"]:
+        if not self.airfieldDbEnabled or self.airfieldDbPath is None:
+            return []
+        if self._airfieldRecords is not None:
+            return self._airfieldRecords
+
+        dbPath = self.airfieldDbPath
+        dbExists = dbPath.is_file()
+        if not dbExists:
+            self._warnConfig(f"Airfield DB not found at {dbPath}; downloading OurAirports data.")
+            self._downloadAirfieldDb(dbPath)
+            dbExists = dbPath.is_file()
+
+        if dbExists and self._isAirfieldDbStale(dbPath):
+            self._warnConfig(
+                f"Airfield DB is older than {self.airfieldDbMaxAgeDays:g} days: {dbPath}. Attempting refresh."
+            )
+            try:
+                self._downloadAirfieldDb(dbPath)
+            except Exception as err:
+                self._warnConfig(f"Failed to refresh airfield DB ({err}); continuing with stale data.")
+        elif not dbExists:
+            self._warnConfig(f"Airfield DB download failed and lookup will be skipped: {dbPath}")
+            self._airfieldRecords = []
+            return self._airfieldRecords
+
+        self._airfieldRecords = self._readOurAirportsCsv(dbPath)
+        return self._airfieldRecords
+
+
+    def _downloadAirfieldDb(self, dbPath: Path) -> None:
+        dbPath.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv', dir=str(dbPath.parent)) as tmp:
+            tempPath = Path(tmp.name)
+
+        try:
+            with urlrequest.urlopen(self.AIRFIELD_DB_URL, timeout=30) as response:
+                payload = response.read()
+            tempPath.write_bytes(payload)
+            tempPath.replace(dbPath)
+        except (OSError, urlerror.URLError) as err:
+            if tempPath.exists():
+                tempPath.unlink()
+            raise RuntimeError(f"unable to download {self.AIRFIELD_DB_URL}: {err}") from err
+
+
+    def _readOurAirportsCsv(self, dbPath: Path) -> List["OurAirportsRecord"]:
+        records: List[OurAirportsRecord] = []
+        with dbPath.open('r', encoding='utf-8', newline='') as dbFile:
+            reader = csv.DictReader(dbFile)
+            for row in reader:
+                latRaw = row.get('latitude_deg', '')
+                lonRaw = row.get('longitude_deg', '')
+                try:
+                    lattitude = float(latRaw)
+                    longitude = float(lonRaw)
+                except (TypeError, ValueError):
+                    continue
+                records.append(
+                    OurAirportsRecord(
+                        ident=(row.get('ident') or '').strip(),
+                        gpsCode=(row.get('gps_code') or '').strip(),
+                        localCode=(row.get('local_code') or '').strip(),
+                        iataCode=(row.get('iata_code') or '').strip(),
+                        name=(row.get('name') or '').strip(),
+                        lattitude=lattitude,
+                        longitude=longitude,
+                    )
+                )
+        return records
+
+
+    def _isAirfieldDbStale(self, dbPath: Path) -> bool:
+        try:
+            mtime = dbPath.stat().st_mtime
+        except OSError:
+            return True
+        ageDays = (datetime.now() - datetime.fromtimestamp(mtime)).total_seconds() / 86400.0
+        return ageDays > self.airfieldDbMaxAgeDays
+
+
+    def _resolveAirfieldDbPath(self, dbValue: Optional[str]) -> Optional[Path]:
+        if dbValue is None:
+            return None
+        if dbValue == '':
+            return Path(os.path.dirname(os.path.abspath(__file__))) / self.AIRFIELD_DB_DEFAULT_FILENAME
+
+        pathString = dbValue.strip()
+        path = Path(pathString).expanduser()
+        if pathString.endswith(('/', '\\')) or (path.exists() and path.is_dir()) or path.suffix == '':
+            path = path / self.AIRFIELD_DB_DEFAULT_FILENAME
+        return path
+
+
+    def _getFloatDefault(
+        self,
+        defaults: Any,
+        key: str,
+        fallback: float,
+        minimum: Optional[float],
+        warningPrefix: str,
+        legacyKey: Optional[str] = None,
+    ) -> float:
+        rawValue = None
+        usedKey = key
+        if key in defaults:
+            rawValue = defaults[key]
+        elif legacyKey and legacyKey in defaults:
+            rawValue = defaults[legacyKey]
+            usedKey = legacyKey
+        if rawValue is None:
+            return fallback
+
+        try:
+            value = float(rawValue)
+        except ValueError:
+            self._warnConfig(f"Ignoring invalid {usedKey} value {rawValue!r}; using default {fallback}.")
+            return fallback
+        if minimum is not None and value < minimum:
+            self._warnConfig(f"Ignoring invalid {usedKey} value {rawValue!r}; minimum is {minimum}.")
+            return fallback
+        return value
 
 
     def acftByTail(self, tailNumber:str):
@@ -271,8 +597,8 @@ class Config():
         return None
 
 
-    def _loadWaypoints(self) -> List["AirportOffsetEntry"]:
-        entries: List["AirportOffsetEntry"] = []
+    def _loadWaypoints(self) -> List["WaypointEntry"]:
+        entries: List["WaypointEntry"] = []
         if not self.file:
             return entries
 
@@ -290,19 +616,23 @@ class Config():
             lonRaw = sectionData.get('lon')
             offsetRaw = sectionData.get('offset')
 
-            if latRaw is None or lonRaw is None:
-                self._warnConfig(f"Skipping [{section}] because both lat and lon are required in phase 1.")
-                continue
             if offsetRaw is None:
                 self._warnConfig(f"Skipping [{section}] because offset is required.")
                 continue
 
-            try:
-                lat = float(latRaw)
-                lon = float(lonRaw)
-            except ValueError:
-                self._warnConfig(f"Skipping [{section}] because lat/lon must be numeric.")
-                continue
+            lat = None
+            lon = None
+            if latRaw is None or lonRaw is None:
+                if not self.airfieldDbEnabled:
+                    self._warnConfig(f"Skipping [{section}] because both lat and lon are required in phase 1.")
+                    continue
+            else:
+                try:
+                    lat = float(latRaw)
+                    lon = float(lonRaw)
+                except ValueError:
+                    self._warnConfig(f"Skipping [{section}] because lat/lon must be numeric.")
+                    continue
 
             try:
                 offset = self.parseOffset(offsetRaw)
@@ -322,13 +652,13 @@ class Config():
             )
 
             entries.append(
-                AirportOffsetEntry(
+                WaypointEntry(
                     code=waypointName,
-                    lattitude=lat,
-                    longitude=lon,
                     offset=offset,
                     innerRadiusNm=innerRadiusNm,
                     outerRadiusNm=outerRadiusNm,
+                    lattitude=lat,
+                    longitude=lon,
                 )
             )
 
@@ -359,7 +689,7 @@ class Config():
 
     def findConfigFile(self, cliPath:str):
         if cliPath:
-            return cliPath
+            return os.path.expanduser(cliPath)
         
         paths = ('.', os.path.dirname(os.path.abspath(__file__)))
         files = ('42fdr.conf', '42fdr.ini')
@@ -413,33 +743,8 @@ class FlightMeta():
     RouteWaypoints         : Optional[str]       = None
 
 
-class AirportOffsetEntry:
-    code: str
-    lattitude: float
-    longitude: float
-    offset: CardinalOffset
-    innerRadiusNm: float
-    outerRadiusNm: float
-
-    def __init__(
-        self,
-        code: str,
-        lattitude: float,
-        longitude: float,
-        offset: CardinalOffset,
-        innerRadiusNm: float,
-        outerRadiusNm: float,
-    ):
-        self.code = code
-        self.lattitude = lattitude
-        self.longitude = longitude
-        self.offset = offset
-        self.innerRadiusNm = max(0.0, innerRadiusNm)
-        self.outerRadiusNm = max(self.innerRadiusNm, outerRadiusNm)
-
-
 class AirportOffsetHelper:
-    _entries: List[AirportOffsetEntry]
+    _entries: List[WaypointEntry]
 
 
     def __init__(self):
@@ -456,16 +761,15 @@ class AirportOffsetHelper:
         outerRadiusNm: float,
     ) -> None:
         self._entries.append(
-            AirportOffsetEntry(
+            WaypointEntry(
                 code=code,
-                lattitude=lattitude,
-                longitude=longitude,
                 offset=offset,
                 innerRadiusNm=innerRadiusNm,
                 outerRadiusNm=outerRadiusNm,
+                lattitude=lattitude,
+                longitude=longitude,
             )
         )
-
 
     def offsetForPosition(self, lattitude: float, longitude: float) -> Optional[GeodeticOffset]:
         cardinalOffset = self._offsetFeetForPosition(lattitude, longitude)
@@ -475,10 +779,12 @@ class AirportOffsetHelper:
 
 
     def _offsetFeetForPosition(self, lattitude: float, longitude: float) -> Optional[CardinalOffset]:
-        innerMatches: List[Tuple[float, AirportOffsetEntry]] = []
-        outerMatches: List[Tuple[float, AirportOffsetEntry]] = []
+        innerMatches: List[Tuple[float, WaypointEntry]] = []
+        outerMatches: List[Tuple[float, WaypointEntry]] = []
 
         for entry in self._entries:
+            if entry.lattitude is None or entry.longitude is None:
+                continue
             distanceNm = greatCircleDistanceNm(lattitude, longitude, entry.lattitude, entry.longitude)
             if distanceNm <= entry.innerRadiusNm:
                 innerMatches.append((distanceNm, entry))
@@ -658,30 +964,55 @@ class FdrFlight():
         self.metaData = None
 
 
+    def buildBoundingBoxes(self, cellSizeNm: float) -> List[BoundingBox]:
+        if not self.trackData:
+            return []
+        first = self.trackData[0]
+        originLat = float(first['Latitude'])
+        originLon = float(first['Longitude'])
+        if cellSizeNm <= 0:
+            box = BoundingBox(originLat, originLon)
+            for trackData in self.trackData[1:]:
+                box.include(float(trackData['Latitude']), float(trackData['Longitude']))
+            return [box]
+
+        boxesByCell: Dict[Tuple[int, int], BoundingBox] = {}
+        for trackData in self.trackData:
+            lat = float(trackData['Latitude'])
+            lon = float(trackData['Longitude'])
+            northNm = latitudeDegreesToNm(lat - originLat)
+            eastNm = longitudeDegreesToNm(lon - originLon, (lat + originLat) / 2.0)
+            cellX = math.floor(eastNm / cellSizeNm)
+            cellY = math.floor(northNm / cellSizeNm)
+            key = (cellX, cellY)
+            if key not in boxesByCell:
+                boxesByCell[key] = BoundingBox(lat, lon)
+            else:
+                boxesByCell[key].include(lat, lon)
+
+        return list(boxesByCell.values())
+
+
     def buildTrackPoints(self, config: Config) -> None:
         meta = self.metaData or FlightMeta()
         tailConfig = config.tail(self.TAIL)
         drefSources, _ = config.drefsByTail(self.TAIL)
-        airportOffsets = config.airportOffsetsForFlight(self)
+        boundingBoxes = self.buildBoundingBoxes(config.airfieldGridCellNm)
+        offsetHelper = config.offsetHelperForFlight(self, boundingBoxes)
 
         for trackData in self.trackData:
-            baseLong = float(trackData['Longitude'])
-            baseLat = float(trackData['Latitude'])
-            baseAlt = float(trackData['Altitude'])
-
-
             point = FdrTrackPoint(
                 time      = datetime.fromtimestamp(float(trackData['Timestamp']) + self.timezone),
-                longitude = baseLong,
-                latitude  = baseLat,
-                altitude  = baseAlt,
+                longitude = float(trackData['Longitude']),
+                latitude  = float(trackData['Latitude']),
+                altitude  = float(trackData['Altitude']),
                 heading   = wrapHeading(float(trackData['Course']) + tailConfig['headingtrim']),
                 pitch     = wrapAttitude(float(trackData['Pitch']) + tailConfig['pitchtrim']),
                 roll      = wrapAttitude(float(trackData['Bank']) + tailConfig['rolltrim'])
             )
             point.addDrefs(drefSources, meta, trackData)
 
-            offset = airportOffsets.offsetForPosition(baseLat, baseLong)
+            offset = offsetHelper.offsetForPosition(point.LAT, point.LONG)
             if offset is not None:
                 point.addOffset(offset)
 
@@ -786,6 +1117,7 @@ def main(argv:List[str]):
     parser.add_argument('-c', '--config', default=None, help='Path to 42fdr config file')
     parser.add_argument('-t', '--timezone', default=None, help='An offset to add to all times processed.  +/-hh:mm[:ss] or +/-<decimal hours>')
     parser.add_argument('-o', '--outputFolder', default=None, dest='outputFolder', help='Path to write X-Plane compatible FDR v4 output file')
+    parser.add_argument('--airfieldDB', nargs='?', default=None, const='', metavar='PATH', help='Enable local airfield lookup using OurAirports data. Optional path may be a CSV file or directory.')
     parser.add_argument('--oo', default=None, dest='offsetOrig', metavar='EAST,NORTH,UP', help='Position offset at origin airport in feet: east, north, up. Use with --od for airport-aware blending.')
     parser.add_argument('--od', default=None, dest='offsetDest', metavar='EAST,NORTH,UP', help='Position offset at destination airport in feet; same format as --oo')
     parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV, KML)')
@@ -793,6 +1125,7 @@ def main(argv:List[str]):
     
     config = Config(args)
     for inPath in args.trackfile:
+        inPath = os.path.expanduser(inPath)
         trackFile = open(inPath, 'r')
         fdrFlight = parseInputFile(config, trackFile)
 
@@ -1129,6 +1462,21 @@ def firstLastTrackPosition(trackData: List[Dict[str, Any]]) -> Tuple[Optional[fl
         float(last['Latitude']),
         float(last['Longitude']),
     )
+
+
+def latitudeDegreesToNm(deltaLatitudeDegrees: float) -> float:
+    return deltaLatitudeDegrees * 60.0
+
+
+def longitudeDegreesToNm(deltaLongitudeDegrees: float, atLatitudeDegrees: float) -> float:
+    return deltaLongitudeDegrees * 60.0 * math.cos(math.radians(atLatitudeDegrees))
+
+
+def longitudeDegreesForNm(distanceNm: float, atLatitudeDegrees: float) -> float:
+    cosLatitude = abs(math.cos(math.radians(atLatitudeDegrees)))
+    if cosLatitude < 1e-12:
+        return 180.0
+    return distanceNm / (60.0 * cosLatitude)
 
 
 def greatCircleDistanceNm(lat1Deg: float, lon1Deg: float, lat2Deg: float, lon2Deg: float) -> float:
