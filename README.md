@@ -16,7 +16,7 @@ When properly configured, it can process hundreds of flights across a fleet of a
 
 ## Installation
 
-42fdr does not need to be "installed" — just extract the files and add the folder to your PATH.  
+42fdr does not need to be "installed" — just extract the files and add the folder to your PATH.
 <br/>
 
 
@@ -39,7 +39,7 @@ https://www.python.org/downloads/
 ### Step 2 – Download 42fdr
 ---
 
-1. Get the lateest release from the GitHub:
+1. Get the latest release from GitHub:
 
    - https://github.com/MadReasonable/42fdr/releases
 
@@ -88,15 +88,17 @@ https://www.python.org/downloads/
 ## Usage
 Windows (via *42fdr.bat* in PATH):
 ```cmd
-42fdr [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] [--airfieldDB [path]] [--oo offsetOrig] [--od offsetDest] trackFile1 [trackFile2 ...]
+42fdr [-c configFile] [-a aircraft] [-t aircraftType] [-z timezone] [-o outputFolder] [--airfieldDB] [--airfieldDBPath path] [--inferRoute] [-O offsetOrig] [-D offsetDest] trackFile1 [trackFile2 ...]
 ```
 
 macOS/Linux:
 ```bash
-42fdr.py [-c configFile] [-a aircraft] [-t timezone] [-o outputFolder] [--airfieldDB [path]] [--oo offsetOrig] [--od offsetDest] trackFile1 [trackFile2 ...]
+42fdr.py [-c configFile] [-a aircraft] [-t aircraftType] [-z timezone] [-o outputFolder] [--airfieldDB] [--airfieldDBPath path] [--inferRoute] [-O offsetOrig] [-D offsetDest] trackFile1 [trackFile2 ...]
 ```
 
-42FDR will convert one or more files, rename it with the `.fdr` extension, and save the output to the current working directory.
+> **Breaking changes:** `-t` now selects `--aircraftType` and the timezone short flag has moved to `-z`.
+
+42fdr converts one or more files, renames them with the `.fdr` extension, and saves the output to the current working directory.
 
 42fdr supports both CSV and KML files, but CSV are preferred as they provide more metadata in a smaller, simpler file.
 Either format will produce equally valid FDR files.
@@ -104,36 +106,71 @@ Either format will produce equally valid FDR files.
 
 | Options | Description |
 |---------|-------------|
-| `-c`    | Specify a config file.  A config file can be used to set the options below instead of on the command-line.  A config file can also define custom DREFs, automatically lookup an X-Plane aircraft by tail number, and load tail specific attitude calibrations.
-| `-a`    | Choose an X-Plane aircraft.  X-Plane requires the FDR file to specify an aircraft model, which is not included in the ForeFlight track file.  `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf` is used by default unless overridden by a config file or command line option.
-| `-t`    | Adjust all times by this (positive or negative) amount.  If you've recorded your flight in local time, this value should be the *opposite* of your actual timezone. It will be added to recorded timestamps to get Zulu time.  Can be expressed as a decimal number of hours (e.g. `3.5`) or in the format +/-hh:mm[:ss] (e.g. `-5:00`)
-| `-o`    | Choose a different output path for the generated `.fdr` files.
-| `--airfieldDB` | Enable optional local airfield lookup from OurAirports data. With no value, uses `airports.csv` in the script folder. With a path, uses the given CSV file or directory (directory defaults to `airports.csv`).
-| `--oo`  | Airport position offset at origin airport in feet: `east,north,up`. Use with `--od` for airport-aware blending. Offsets adjust only the written track position for X-Plane scenery alignment; the comment summary and DREF columns stay as computed from the original ForeFlight data.
-| `--od`  | Airport position offset at destination airport in feet; same format as `--oo`.
+| `-c`    | Specify a config file.  A config file can be used to set the options below instead of on the command line.  A config file can also define custom DREFs, automatically look up an X-Plane aircraft by tail number, and load tail-specific attitude calibrations.
+| `-a`    | Choose an X-Plane aircraft. X-Plane requires the FDR file to specify an aircraft model, which is not included in the ForeFlight track file. `Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf` is used by default unless overridden by a config file or command-line option.
+| `-t`    | Aircraft category: `airplane` (default), `helicopter`, or `balloon`. Controls which OurAirports records are eligible for route detection and airport offsets (e.g. `helicopter` keeps heliports, `balloon` keeps balloonports).
+| `-z`    | Adjust all times by this (positive or negative) amount.  If you've recorded your flight in local time, this value should be the *opposite* of your actual timezone. It will be added to recorded timestamps to get Zulu time.  Can be expressed as a decimal number of hours (e.g. `3.5`) or in the format +/-hh:mm[:ss] (e.g. `-5:00`)
+| `-o`    | Choose a different output path for the generated `.fdr` files.w
+| `--airfieldDB` | Enable airfield lookup from OurAirports data using the default `OurAirports.csv` path in the 42fdr.py script folder. Downloads CSV if missing or out of date.
+| `--airfieldDBPath` | Enable airfield lookup using a specific OurAirports CSV file or a directory that contains `OurAirports.csv`.
+| `--inferRoute` | Infer actual route from waypoints defined in config and the airfield DB (if enabled).
+| `-O`    | Offset in feet at the **origin** airfield: `east,north,up` (e.g. `"2,0,-15.5"`). See below.
+| `-D`    | Same for the **destination** airfield. See below.
 <br/>
 
+### Offsets: Fixing Hovering/Sinking During Taxi
+---
+Recorded GPS/AHRS height and runway elevation in X-Plane often disagree slightly, resulting in wheels floating above or clipped into the pavement during taxi.
+Airfield offsets move the aircraft position so ground contact matches the scenery while leaving your instruments as-recorded.
 
-## Using a config file
+#### Coordinate Frame
+Adjustments are given in feet as 3 numbers separated by commas (**east**, **north**, and **up**).
+For example, the command line argument `-O "2,0,-15.5"` moves the aircraft **2 ft east** and **15.5 ft down** at the origin airfield.
+
+#### Waypoints and Airfields
+Waypoint offsets are defined in the config file via `[Waypoint <Name>]` sections.
+Each section specifies a location using lat/long coordinates and defines an offset using the standard (**east**, **north**, and **up**) notation.
+
+When database lookup is enabled via the `--airfieldDB` or `--airfieldDBPath` command-line options, a CSV file from `https://davidmegginson.github.io/ourairports-data/airports.csv` is used to provide lat/long coordinates missing from matching `[Waypoint <Name>]` sections.
+This file is cached for 90 days by default.
+Section names are matched by ICAO, IATA, and common identifiers.
+
+Offsets transition smoothly from 100% inside the inner radius to 0% outside the outer radius.
+Overlapping airspaces are blended smoothly by distance.
+Exact weighting appears under `[Waypoint <Name>] Sections` and airport offset blending later in this file.
+
+##### Inferred Routes
+`42fdr` writes flight metadata to comments in the FDR files it generates.
+ForeFlight CSV files include planned route waypoints, which may not match the actual flight.
+Waypoints from the config file and from the OurAirports airfield database can be used to infer the actual route flown.
+
+#### From the Command-Line
+**`-O`** and **`-D`** allow you to specify offsets for the origin and destination airfields from the command line.
+
+They either add onto already matching waypoint offsets, or **`42fdr`** creates new waypoints (e.g. `ORIG`, `DEST`, or `HOME`) centered around the first and/or last track points.
+
+<br/>
+
+## Using a Config File
 Config files are optional.
 They can be used to avoid passing long parameters on the command line, to compute additional columns for replay, to automatically load the correct X-Plane model for the recorded tail number, and to correct for heading/pitch/roll deviations in specific aircraft.
 
-42fdr will automatically search for a config file named either 42fdr.conf or 42fdr.ini, first in the folder from where you run 42fdr.py and then in the folder where 42fdr.py lives.
+42fdr automatically searches for a config file named either 42fdr.conf or 42fdr.ini, first in the current working folder and then in the folder where 42fdr.py lives.
 You can also specify a custom config file location from the command line.
 
 An example configuration is provided with the name `42fdr.conf.example`.
 Make a copy or rename it, then edit it as needed.
-One `[Defaults]` section and as many `[<Aircraft/*>]`, `[Aircraft <Tail>]`, and `[Waypoint <Name>]` sections as needed are supported.
+One `[Defaults]` section, an optional `[AirfieldDB]`, and as many `[<Aircraft/*>]`, `[Tail <Tail>]`, and `[Waypoint <Name>]` sections as needed are supported.
 
 
 ### 42fdr.conf example:
 ```ini
 [Defaults]
 Aircraft    = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
-Timezone    = 5   ; CSV files record times in Local Time
-TimezoneKML = 0   ; KML files record times in UTC
+Timezone    = 5         ; CSV files record times in Local Time
+TimezoneKML = 0         ; KML files record times in UTC
 OutPath     = .
-AirfieldDBMaxAgeDays = 90
+inferRoute
 
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = {Speed}, 1.0, IAS
 DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 2), 1.0, Altimeter
@@ -149,10 +186,16 @@ DREF sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = {ROLL}, 1.0, Vacuum 
 DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, Barometer
 
 
-[Aircraft N123ND]
+[Tail N123ND]
 headingTrim = 0.03
 pitchTrim   = -0.01
 rollTrim    = 0.0
+
+
+[AirfieldDB]
+enabled = true
+MaxAgeDays = 120
+Path = ./OurAirports.csv
 
 
 [Waypoint KJFK]
@@ -173,10 +216,10 @@ To get instruments like the airspeed indicator and artificial horizon working, a
 `DREF` keys allow you to add additional fields to the output FDR file.
 ForeFlight only provides basic position, attitude, and ground speed. This feature can be used to copy those values to additional fields `(e.g. ground speed to airspeed indicator)`, to pass constant values `(e.g. 29.92)`, and to compute new values `(e.g. round({Pitch}, 3))`.
 
-You can define custom DREFs in most sections:
+You can define custom DREFs in the following sections:
 - `[Defaults]` — applies to all flights
 - `[Aircraft/...]` — applies to flights using that aircraft model
-- `[Aircraft <Tail>]` — applies to flights from that specific tail number
+- `[Tail <Tail>]` — applies to flights from that specific tail number
 
 <br/> 
 
@@ -206,6 +249,8 @@ Where:
 ---
 The `[Defaults]` section defines fallback values used when command-line options are not provided. Common keys include:
 - `aircraft` – default X-Plane aircraft path
+- `AircraftType` – default aircraft category for OurAirports filtering when using `--airfieldDB`: `airplane` (default), `helicopter`, or `balloon`. Overridden by `-t` on the command line. See the **[AirfieldDB]** section for how categories map to airfield types.
+- `inferRoute` – Whether to derive the flight route from configured waypoints and the OurAirports database (`--airfieldDB`). Off unless you add the key, set `inferRoute = true`, or pass `--inferRoute`.
 - `timezone` – default timezone offset
 - `outpath` – default folder for generated `.fdr` files
 
@@ -224,16 +269,18 @@ The section name should be the path to the .acf model file, beginning with the A
 [Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf]
 ```
 
-A single key is supported, `Tails`, which can be used to list all tail numbers which should cause this aircraft to be used in the output file `(e.g. N1234X, N5678Y)`
+The primary key is `Tails`, used to list all tail numbers for which this `.acf` model should be selected in the output file `(e.g. N1234X, N5678Y)`.
+
+Optional **`AircraftType`** — same values as in `[Defaults]` / `-t` (`airplane`, `helicopter`, `balloon`). Used for OurAirports filtering and route detection when using `--airfieldDB`. See **[AirfieldDB]** for how categories map to airfield types.
 
 DREFs defined in this section will be included in FDR files generated for this aircraft model.  
 <br/>
 
-### [Aircraft \<Tail>] Sections
+### [Tail \<Tail>] Sections
 ---
-`[Aircraft <Tail>]` sections allow correction of attitude information in the flight track.
-Use the aircraft registration after `Aircraft` in the section name `(e.g. [Aircraft N1234X])`.
-Legacy `[<Tail>]` sections without the "Aircraft" prefix are still supported for backwards compatibility.
+`[Tail <Tail>]` sections allow correction of attitude information in the flight track.
+Use the aircraft registration after `Tail` in the section name `(e.g. [Tail N1234X])`.
+Legacy `[<Tail>]` sections without the `Tail` prefix are still supported for backward compatibility.
 
 These sections support:
 - `headingTrim`, `pitchTrim`, `rollTrim` — These offsets will be added to attitude data for every track point.
@@ -242,21 +289,35 @@ DREFs defined in this section will be included in FDR files generated for this s
 
 <br/>
 
+### [AirfieldDB] Section
+---
+The optional `[AirfieldDB]` section controls how the OurAirports database is used.
+Set `enabled` to turn it on from config.
+
+`Path` can point to a CSV file or to a directory containing `OurAirports.csv`.
+`MaxAgeDays` controls how old the local file can be before 42fdr tries to refresh it (default is 90 days).
+
+Visit radii are used to control route detection sensitivity for the `inferRoute` feature.
+These settings do not affect waypoint inner/outer offset blending.  OurAirports airfield types are controlled by:
+- `LargeAirportVisitRadius`
+- `MediumAirportVisitRadius`
+- `SmallAirportVisitRadius`
+- `SeaplaneBaseVisitRadius`
+- `HeliportVisitRadius`
+- `BalloonportVisitRadius`
+- `DefaultVisitRadius` — unexpected types
+
+<br/>
+
 ### [Waypoint \<Name>] Sections
 ---
 `[Waypoint <Name>]` sections define position-based replay offsets that can be used for airports or any custom location.
 
 These sections support:
-- `lat`, `lon` — waypoint center in decimal degrees
-- `offset` — offset in feet: `east,north,up`
-- `innerRadiusNm`, `outerRadiusNm` (optional) — blending radii in nautical miles (defaults are 2 and 8)
-
-Phase 1 note:
-- If a waypoint is missing `lat`, `lon`, or `offset`, 42fdr skips that waypoint and prints a config warning.
-
-Phase 2 note:
-- If `--airfieldDB` is enabled, waypoints may omit `lat`/`lon`; 42fdr resolves them from the local airfield DB by waypoint name/code.
-- If the DB is stale (older than `airfieldDBMaxAgeDays`, default 90), 42fdr attempts a refresh and falls back to stale data with a warning if refresh fails.
+- `offset` — offset in feet: `east,north,up`.  Required unless `hideFromRoute` is enabled.
+- `lat`, `lon` — waypoint center in decimal degrees.  Required unless `airfieldDB` or `hideFromRoute` is enabled.
+- `innerRadiusNm`, `outerRadiusNm` (optional) — offset blending radii in nautical miles (defaults are 2 and 6)
+- `hideFromRoute` (optional) — keep this waypoint out of the derived route summary. Off unless you add the key, or set `hideFromRoute = true` / `false` explicitly.
 
 <br/>
 
@@ -384,6 +445,66 @@ Override the aircraft specified in the config.
 ##### **Linux/macOS**
 ```bash
 42fdr.py -a "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" tracklog.csv
+```
+<br/>
+
+**Creates:**
+- `tracklog.fdr`
+
+<br/>
+
+### 🧭 Apply Origin and Destination Offsets
+---
+Apply local replay offsets at the first and/or last track points using feet in `east,north,up` order.
+
+##### **Windows**
+```cmd
+42fdr -O "2,0,-15.5" -D "0,0,-10" tracklog.csv
+```
+
+##### **Linux/macOS**
+```bash
+42fdr.py -O "2,0,-15.5" -D "0,0,-10" tracklog.csv
+```
+<br/>
+
+**Creates:**
+- `tracklog.fdr`
+
+<br/>
+
+### 🛬 Apply an Origin Offset Only
+---
+Use just `-O` when departure and arrival are at the same airfield; `-D` is not needed in that case.
+
+##### **Windows**
+```cmd
+42fdr -O "0,0,-12" tracklog.csv
+```
+
+##### **Linux/macOS**
+```bash
+42fdr.py -O "0,0,-12" tracklog.csv
+```
+<br/>
+
+**Creates:**
+- `tracklog.fdr`
+
+<br/>
+
+### 🗺️ Enable Airfield Database
+---
+Enable local OurAirports lookup so waypoint coordinates can be resolved from database identifiers.
+
+##### **Windows**
+```cmd
+42fdr --airfieldDB tracklog.csv
+```
+
+##### **Linux/macOS**
+```bash
+42fdr.py --airfieldDB tracklog.csv
 ```
 <br/>
 
