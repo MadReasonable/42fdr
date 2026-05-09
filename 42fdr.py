@@ -1433,8 +1433,8 @@ class FdrFlight():
         plannedRoute = flightMeta.RouteWaypoints or "N/A"
         derivedLine = ""
         if flightMeta.DerivedRoute is not None:
-            derivedRoute = ", ".join(flightMeta.DerivedRoute) if flightMeta.DerivedRoute else "N/A"
-            derivedLine = f"\nDerived: {derivedRoute}"
+            derivedRoute = " ".join(flightMeta.DerivedRoute) if flightMeta.DerivedRoute else "N/A"
+            derivedLine = f"\n Derived: {derivedRoute}"
 
         startTime = flightMeta.StartTime
         endTime   = flightMeta.EndTime
