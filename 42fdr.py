@@ -1621,6 +1621,7 @@ def main(argv:List[str]):
     
     config = Config(args)
     for inPath in args.trackfile:
+        print(f"{inPath} ->", end="")
         inPath = os.path.expanduser(inPath)
         trackFile = open(inPath, 'r')
         fdrFlight = parseTrackFile(config, trackFile)
@@ -1631,8 +1632,10 @@ def main(argv:List[str]):
             outPath = getOutpath(config, inPath, fdrFlight)
             with open(outPath, 'w') as fdrFile:
                 fdrFlight.writeFdrFile(config, fdrFile)
+            outputFilename = os.path.basename(outPath)
+            print(f" {outputFilename}")
         else:
-            print(f"No flight data found in {inPath}")
+            print(f" No flight data found in {inPath}")
     return 0
 
 
