@@ -118,10 +118,14 @@ Either format will produce equally valid FDR files.
 | `-D`    | Same for the **destination** airfield. See below.
 <br/>
 
-### Offsets: Fixing Hovering/Sinking During Taxi
+### Offsets: Fixing Hovering During Taxi
 ---
-Recorded GPS/AHRS height and runway elevation in X-Plane often disagree slightly, resulting in wheels floating above or clipped into the pavement during taxi.
-Airfield offsets move the aircraft position so ground contact matches the scenery while leaving your instruments as-recorded.
+Recorded GPS/AHRS height and runway elevation in X-Plane often disagree slightly, resulting in wheels floating above during taxi.
+When configured, airfield offsets move the aircraft position so ground contact matches the scenery while leaving your instruments as-recorded.
+This will not fix positioning errors caused by GPS jitter, *but it can be used to mask it*.
+Setting a negative vertical offset greater than the jitter will "glue" your aircraft to the ground during taxi, at the loss of accurate takeoff/landing times and positions.
+
+Offset effects are gradually diminished with distance from configured areas, with no effect when beyond the defined outer radius (6 nautical miles by default).
 
 #### Coordinate Frame
 Adjustments are given in feet as 3 numbers separated by commas (**east**, **north**, and **up**).
