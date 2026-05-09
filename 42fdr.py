@@ -13,7 +13,7 @@ FdrColumnWidth = 19
 
 
 class ConfigError(ValueError):
-    """Invalid user configuration (``42fdr.conf`` or command-line); fatal in ``__main__``."""
+    """Invalid user configuration (``42fdr.conf`` or command-line). Fatal in ``__main__``."""
 
 
 class FileType(Enum):
@@ -24,6 +24,7 @@ class FileType(Enum):
 
 
 class CardinalOffset:
+    """Local offset in feet (east, north, up) used for waypoint-based nudging."""
     eastFt: float
     northFt: float
     upFt: float
@@ -43,7 +44,7 @@ class CardinalOffset:
         m = Config._XYZ_OFFSET_RE.match(s.strip())
         if not m:
             raise ValueError(
-                f"invalid offset {s!r}; expected east,north,up in feet (three comma-separated numbers, optional +/- per value)"
+                f"invalid offset {s!r}: expected east,north,up in feet (three comma-separated numbers, optional +/- per value)"
             )
         return cls(float(m.group(1)), float(m.group(2)), float(m.group(3)))
 
@@ -82,6 +83,7 @@ class CardinalOffset:
 
 
 class GeodeticOffset:
+    """Rendered offset in degrees/feet (lat, lon, altitude) used for waypoint-based nudging."""
     deltaLatitude: float
     deltaLongitude: float
     deltaAltitude: float
@@ -182,11 +184,11 @@ class Config():
         if self.aircraftType not in self.AIRFIELD_TYPES_BY_AIRCRAFT:
             allowed = ', '.join(sorted(self.AIRFIELD_TYPES_BY_AIRCRAFT))
             raise ConfigError(
-                f"Unknown aircraftType {self.aircraftType!r}; expected one of: {allowed}."
+                f"Unknown aircraftType {self.aircraftType!r}. Expected one of: {allowed}."
             )
 
         if cliArgs.timezone:
-            self.timezone = timezoneOffsetSeconds(cliArgs.timezone)
+            self.timezone = timezoneOffsetInSeconds(cliArgs.timezone)
         else:
             if 'timezone' in defaults:
                 self.timezone = self._parseTimezone(defaults, 'timezone')
@@ -202,7 +204,7 @@ class Config():
 
         self.airfieldDefaultVisitRadiusNm = self.AIRFIELD_DEFAULT_VISIT_RADIUS_NM
         self.airfieldTypeVisitRadiusNm = dict(self.AIRFIELD_TYPE_VISIT_RADIUS_NM)
-        self._apply_airfielddb_section(cliArgs.airfieldDB)
+        self._applyAirfieldDbSection(cliArgs.airfieldDB)
         self._airfieldRecords = None
 
         if cliArgs.inferRoute:
@@ -224,18 +226,16 @@ class Config():
 
 
     def aircraftPathForTail(self, tailNumber: str) -> str:
+        """Path to aircraft model file for this tail number."""
         section = self._aircraftByTail(tailNumber)
         return section.replace('\\', '/') if section else self.aircraft
 
 
     def airfieldCategoryForTail(self, tailNumber: str) -> str:
-        """Aircraft category for OurAirports filtering for this flight's tail.
+        """Airfield category for OurAirports filtering for this tail.
 
-        Uses the same aircraft section as ``_aircraftByTail`` (tail-specific
-        ``[Aircraft/...]`` match when listed under ``Tails``, otherwise the
-        default aircraft path). Reads that section's optional ``AircraftType``
-        when present; otherwise ``self.aircraftType`` from ``[Defaults]`` / CLI.
-        Not read from ``[Tail ...]`` sections.
+        Uses ``AircraftType`` from the matched ``[Aircraft/...]`` section when set,
+        otherwise uses the global ``aircraftType`` from config/CLI.
         """
         if self.file:
             section = self._aircraftByTail(tailNumber)
@@ -248,12 +248,13 @@ class Config():
                         return resolved
                     allowed = ', '.join(sorted(self.AIRFIELD_TYPES_BY_AIRCRAFT))
                     raise ConfigError(
-                        f"Unknown AircraftType {resolved!r} in [{section}]; expected one of: {allowed}."
+                        f"Unknown AircraftType {resolved!r} in [{section}]. Expected one of: {allowed}."
                     )
         return self.aircraftType
 
 
     def drefsByTail(self, tailNumber: str) -> Tuple[Dict[str, str], List[str]]:
+        """Collect DREF definitions from all relevant sections."""
         sources: Dict[str, str] = {}
         defines: List[str] = []
 
@@ -262,14 +263,14 @@ class Config():
             sources[name] = value
             defines.append(f'{instrument}\t{scale}\t\t// source: {value}')
 
-        def fromSection(sectionName: str):
+        def parseDrefsInSection(sectionName: str):
             if self.file and sectionName in self.file:
                 for key, val in self.file[sectionName].items():
                     if key.lower().startswith('dref '):
-                        instrument, expr, scale, name = parseDrefConfig(key, val)
+                        instrument, expr, scale, name = parseDrefEntry(key, val)
                         add(instrument, expr, scale, name)
 
-        def parseDrefConfig(key: str, val: str) -> Tuple[str, str, str, Optional[str]]:
+        def parseDrefEntry(key: str, val: str) -> Tuple[str, str, str, Optional[str]]:
             if not key.lower().startswith('dref '):
                 raise ConfigError(f"Invalid DREF key (must start with 'DREF '): {key}")
 
@@ -307,17 +308,18 @@ class Config():
         add('sim/cockpit2/gauges/indicators/ground_speed_kt', 'round({Speed}, 4)', '1.0', 'GndSpd')
 
         tailSection = self._tailSectionFor(tailNumber)
-        fromSection('Defaults')
-        fromSection(self._aircraftByTail(tailNumber))
-        fromSection(tailNumber)
+        parseDrefsInSection('Defaults')
+        parseDrefsInSection(self._aircraftByTail(tailNumber))
+        parseDrefsInSection(tailNumber)
         if tailSection is not None:
-            fromSection(tailSection)
+            parseDrefsInSection(tailSection)
 
         return sources, defines
 
 
     _TAIL_TRIM_KEYS = frozenset[str]({'headingtrim', 'pitchtrim', 'rolltrim'})
-    def tail(self, tailNumber:str):
+    def tailConfigFor(self, tailNumber:str) -> dict[str, Any]:
+        """Load tail config from [Tail <TailNumber>] and legacy [<TailNumber>] sections."""
         tailConfig = {}
         tailSectionName = self._tailSectionFor(tailNumber)
         if self.file:
@@ -398,7 +400,7 @@ class Config():
                 )
                 seenCodes.add(codeUpper)
 
-        self._mergeCliOffsetsIntoWaypoints(flight, merged, seenCodes)
+        self._applyCliOffsetsToWaypoints(flight, merged, seenCodes)
 
         return merged
 
@@ -407,6 +409,7 @@ class Config():
         self,
         waypoints: List["WaypointEntry"],
     ) -> "WaypointOffsetHelper":
+        """Create a helper for calculating waypoint offsets."""
         offsetHelper = WaypointOffsetHelper()
         for entry in waypoints:
             if entry.offset is not None:
@@ -423,7 +426,9 @@ class Config():
 
 
     def _aircraftByTail(self, tailNumber: str) -> str:
-        """Section name for ``[Aircraft/...]`` when ``tailNumber`` is in ``Tails``; else ``self.aircraft``."""
+        """Section name for ``[Aircraft/...]`` when ``tailNumber`` is in ``Tails``.
+        If no section is found, return the default aircraft.
+        """
         tail = (tailNumber or '').strip()
         if self.cliAircraft or not self.file or not tail:
             return self.aircraft
@@ -450,7 +455,7 @@ class Config():
         return None
 
 
-    def _appendCliSyntheticWaypoint(
+    def _appendSyntheticCliWaypoint(
         self,
         merged: List["WaypointEntry"],
         seenCodes: set,
@@ -480,7 +485,7 @@ class Config():
         seenCodes.add(codeUpper)
 
 
-    def _applyCliOffset(
+    def _applyCliOffsetAtPosition(
         self,
         flightMeta: Optional["FlightMeta"],
         isOrigin: bool,
@@ -498,20 +503,20 @@ class Config():
             code = (flightMeta.DerivedOrigin if flightMeta and flightMeta.DerivedOrigin else "ORIG").strip() or "ORIG"
         else:
             code = (flightMeta.DerivedDestination if flightMeta and flightMeta.DerivedDestination else "DEST").strip() or "DEST"
-        self._appendCliSyntheticWaypoint(merged, seenCodes, latitude, longitude, offset, code)
+        self._appendSyntheticCliWaypoint(merged, seenCodes, latitude, longitude, offset, code)
 
 
-    def _mergeCliOffsetsIntoWaypoints(
+    def _applyCliOffsetsToWaypoints(
         self,
         flight: "FdrFlight",
         waypoints: List["WaypointEntry"],
         seenCodes: set,
     ) -> None:
+        """If -O and -D are provided, create new waypoints or merge them into existing waypoints."""
         origOffset, destOffset = self.offsetOrig, self.offsetDest
-        if origOffset is None and destOffset is None:
+        if not flight.trackData or (origOffset is None and destOffset is None):
             return
-        if not flight.trackData:
-            return
+
         first = flight.trackData[0]
         last = flight.trackData[-1]
         firstLat = float(first["Latitude"])
@@ -524,37 +529,32 @@ class Config():
             firstWaypoint = self._nearestWaypoint(firstLat, firstLon, waypoints)
             lastWaypoint = self._nearestWaypoint(lastLat, lastLon, waypoints)
 
+            # If origin/destination resolve to the same location, collapse -O/-D into one averaged offset.
             if firstWaypoint is lastWaypoint and firstWaypoint is not None:
                 offset = origOffset.averageWith(destOffset)
                 firstWaypoint.offset = firstWaypoint.offset + offset
-                self._warnConfig(
-                    f"CLI: -O and -D applied to the same inner zone ({firstWaypoint.code}); "
-                    f"offsets were averaged."
-                )
+                self._warnConfig(f"CLI: -O and -D applied to the same inner zone ({firstWaypoint.code}). Offsets were averaged.")
                 return
 
             firstLastDistanceNm = greatCircleDistanceNm(firstLat, firstLon, lastLat, lastLon)
+            # If origin/destination are very close to each other, create a HOME waypoint at the midpoint.
             if firstLastDistanceNm <= self.OFFSET_INNER_RADIUS_NM + 1e-9:
                 midLat = 0.5 * (firstLat + lastLat)
                 midLon = 0.5 * (firstLon + lastLon)
                 offset = origOffset.averageWith(destOffset)
-                self._appendCliSyntheticWaypoint(waypoints, seenCodes, midLat, midLon, offset, "HOME")
-                differNote = (
-                    " -O and -D differ; offsets were averaged."
-                    if not origOffset.approxEqual(destOffset)
-                    else ""
-                )
+                self._appendSyntheticCliWaypoint(waypoints, seenCodes, midLat, midLon, offset, "HOME")
+                differNote = " -O and -D differ. Offsets were averaged." if not origOffset.approxEqual(destOffset) else ""
                 self._warnConfig(
-                    "CLI: first and last track points are within the default inner radius of each other; "
-                    "using midpoint position and averaged -O/-D offsets (HOME)."
+                    "CLI: first and last track points are within the default inner radius of each other. "
+                    "Using midpoint position and averaged -O/-D offsets (HOME)."
                     + differNote
                 )
                 return
 
         if origOffset is not None:
-            self._applyCliOffset(flightMeta, True, firstLat, firstLon, origOffset, waypoints, seenCodes)
+            self._applyCliOffsetAtPosition(flightMeta, True, firstLat, firstLon, origOffset, waypoints, seenCodes)
         if destOffset is not None:
-            self._applyCliOffset(flightMeta, False, lastLat, lastLon, destOffset, waypoints, seenCodes)
+            self._applyCliOffsetAtPosition(flightMeta, False, lastLat, lastLon, destOffset, waypoints, seenCodes)
 
 
     def _resolveWaypoint(
@@ -562,6 +562,7 @@ class Config():
         waypoint: "WaypointEntry",
         lookupMap: Dict[str, "OurAirportsRecord"],
     ) -> Optional["WaypointEntry"]:
+        """Resolve missing coordinates for a configured waypoint location using coordinates from a matching OurAirports record."""
         if waypoint.hasCoordinates():
             return waypoint
 
@@ -620,6 +621,7 @@ class Config():
         boundingBoxes: List["BoundingBox"],
         airfieldCategory: Optional[str] = None,
     ) -> List["OurAirportsRecord"]:
+        """Filter OurAirports records by type and bounding box."""
         records = self._loadOurAirportsRecords()
         if not records:
             return []
@@ -653,7 +655,7 @@ class Config():
         return False
 
 
-    def _apply_airfielddb_section(self, cliAirfieldDb: Optional[str]) -> None:
+    def _applyAirfieldDbSection(self, cliAirfieldDb: Optional[str]) -> None:
         """Read ``[AirfieldDB]``: MaxAgeDays, Path, and per-type visit radii for route detection."""
         dbPathViaCli = cliAirfieldDb not in (None, '')
         if cliAirfieldDb is not None:
@@ -671,7 +673,7 @@ class Config():
                 elif key == 'maxagedays':
                     self.airfieldDbMaxAgeDays = self._parseFloat(section, 'maxagedays')
                 elif key == 'path':
-                    if not dbPathViaCli and self.airfieldDbEnabled:
+                    if self.airfieldDbEnabled and not dbPathViaCli:
                         dbPath = '' if raw is None else str(raw).strip()
                         self.airfieldDbPath = self._resolveAirfieldDbPath(dbPath)
                 elif key == 'defaultvisitradius' or key in self._AIRFIELDS_VISIT_RADIUS_OPTION_TO_TYPE:
@@ -679,6 +681,7 @@ class Config():
                         val = max(0.0, float(str(raw).strip()))
                     except ValueError:
                         raise ConfigError(f"Invalid {key!r} in [AirfieldDB]: {raw!r}.") from None
+
                     if key == 'defaultvisitradius':
                         self.airfieldDefaultVisitRadiusNm = val
                     else:
@@ -693,6 +696,7 @@ class Config():
 
 
     def _loadOurAirportsRecords(self) -> List["OurAirportsRecord"]:
+        """Load records from OurAirports database into memory."""
         if not self.airfieldDbEnabled or self.airfieldDbPath is None:
             return []
         if self._airfieldRecords is not None:
@@ -701,7 +705,7 @@ class Config():
         dbPath = self.airfieldDbPath
         dbExists = dbPath.is_file()
         if not dbExists:
-            self._infoAirfield(f"database not found at {dbPath}; downloading OurAirports data.")
+            self._infoAirfield(f"database not found at {dbPath}. Downloading OurAirports data.")
             try:
                 self._downloadOurAirportsDb(dbPath)
             except Exception as err:
@@ -715,12 +719,12 @@ class Config():
 
         if dbPath.is_file() and self._isAirfieldDbStale(dbPath):
             self._infoAirfield(
-                f"database is older than {self.airfieldDbMaxAgeDays:g} days ({dbPath}); attempting refresh."
+                f"database is older than {self.airfieldDbMaxAgeDays:g} days ({dbPath}). Attempting refresh."
             )
             try:
                 self._downloadOurAirportsDb(dbPath)
             except Exception as err:
-                self._infoAirfield(f"refresh failed ({err}); continuing with existing file.")
+                self._infoAirfield(f"refresh failed ({err}). Continuing with existing file.")
         if not dbPath.is_file():
             raise ConfigError(f"Airfield database required but no usable file at {dbPath}.")
 
@@ -783,6 +787,7 @@ class Config():
 
 
     def _resolveAirfieldDbPath(self, dbValue: str) -> Path:
+        """Resolve the path to the airfield database. If empty, use the default filename in the current directory."""
         if not dbValue:
             return Path(os.path.dirname(os.path.abspath(__file__))) / self.AIRFIELD_DB_DEFAULT_FILENAME
 
@@ -840,6 +845,7 @@ class Config():
         key: str,
         default: Optional[float] = None,
     ) -> float:
+        """Parse a float in the form '1.23' with optional sign. If missing, return the default."""
         label = f"[{getattr(section, 'name', 'Defaults')}]"
         if not section or key not in section:
             if default is not None:
@@ -855,6 +861,7 @@ class Config():
 
     @staticmethod
     def _parseOptionalFloat(section: Any, key: str) -> Optional[float]:
+        """Parse a float in the form '1.23' with optional sign."""
         if not section or key not in section:
             return None
         return Config._parseFloat(section, key)
@@ -862,21 +869,23 @@ class Config():
 
     @staticmethod
     def _parseTimezone(section: Any, key: str) -> float:
+        """Parse a timezone offset in the form '-5', '5.5', or '+05:30'."""
         label = f"[{getattr(section, 'name', 'Defaults')}]"
         if not section or key not in section:
             raise ConfigError(f"Missing {key!r} in {label}.")
 
         rawValue = section[key]
         try:
-            return timezoneOffsetSeconds(rawValue)
+            return timezoneOffsetInSeconds(rawValue)
         except (ValueError, IndexError):
             raise ConfigError(
-                f"{key} in {label} must be a timezone offset like '-5', '5.5', or '+05:30'; got {rawValue!r}."
+                f"{key} in {label} must be a timezone offset like '-5', '5.5', or '+05:30'. Got {rawValue!r}."
             )
 
 
     @staticmethod
     def _parseOffset(section: Any, key: str, hideFromRoute: bool) -> Optional[CardinalOffset]:
+        """Parse an offset in the form 'east,north,up' with optional sign on each (all feet)."""
         label = f"[{getattr(section, 'name', 'Defaults')}]"
         offsetRaw = section.get(key)
         if offsetRaw is None:
@@ -894,7 +903,7 @@ class Config():
 
     @staticmethod
     def _parseEnableFlag(section: Any, key: str) -> bool:
-        """Parse a boolean option from ``sectionData``: absent is off; bare key or empty value is on (``allow_no_value``)."""
+        """Parse a boolean in the form True/Yes/1/On or False/No/0/Off. A bare key with no value is true."""
         normalKey = key.lower()
         if not section or normalKey not in section:
             return False
@@ -1149,11 +1158,13 @@ class WaypointOffsetHelper:
 
     @staticmethod
     def _inverseRatioWeights(distances: List[float]) -> List[float]:
+        """Blend waypoint offsets by closeness."""
         if not distances:
             return []
         epsilon = 1e-12
         zeroDistanceIndexes = [i for i, distance in enumerate(distances) if distance <= epsilon]
         if zeroDistanceIndexes:
+            # Avoid division by zero, handle edge case of multiple waypoints at exact center.
             dominantWeight = 1.0 / len(zeroDistanceIndexes)
             return [dominantWeight if i in zeroDistanceIndexes else 0.0 for i in range(len(distances))]
 
@@ -1289,6 +1300,7 @@ class FdrFlight():
 
 
     def _buildBoundingBoxes(self, cellSizeNm: float) -> List[BoundingBox]:
+        # Bucket track points into grid-local boxes to optimize nearby-airfield checks.
         if not self.trackData:
             return []
         first = self.trackData[0]
@@ -1319,7 +1331,7 @@ class FdrFlight():
 
     def buildTrackPoints(self, config: Config) -> None:
         meta = self.metaData or FlightMeta()
-        tailConfig = config.tail(self.TAIL)
+        tailConfig = config.tailConfigFor(self.TAIL)
         drefSources, _ = config.drefsByTail(self.TAIL)
         boundingBoxes = self._buildBoundingBoxes(config.airfieldGridCellNm)
         waypoints = config.waypointsForFlight(self, boundingBoxes)
@@ -1367,7 +1379,7 @@ class FdrFlight():
 
         if len(derivedRoute) == 1 and hasDeparted:
             if nearestCode is not None and nearestCode == derivedRoute[0]:
-                # Make sure rounds trips with only one waypoint are expanded to two.
+                # Make sure round trips with only one waypoint are expanded to two.
                 derivedRoute.append(nearestCode)
 
         meta.DerivedRoute = derivedRoute if config.enableRouting else None
@@ -1554,6 +1566,7 @@ COMM,                      Longitude,            Latitude,              AltMSL, 
 
         for point in self.track:
             outLat, outLong, outAltMSL = point.renderPosition()
+            # Keep hundredths only. More precision triggers X-Plane "Out of range FDR-file time!".
             time    = point.TIME.strftime('%H:%M:%S.%f')[:-4]
             long    = str.rjust(str(self._roundLatLong(outLong)), FdrColumnWidth)
             lat     = str.rjust(str(self._roundLatLong(outLat)), FdrColumnWidth)
@@ -1570,7 +1583,7 @@ COMM,                      Longitude,            Latitude,              AltMSL, 
 
 
 class _ArgparseHelpFormatter(argparse.HelpFormatter):
-    """Default help width is ~80 columns; use 200 so option text is rarely reflowed to the next line."""
+    """Increase first column width so long option names fit on one line."""
     def __init__(self, prog: str) -> None:
         super().__init__(prog, max_help_position=50)
 
@@ -1595,7 +1608,7 @@ def _buildArgParser() -> argparse.ArgumentParser:
         help='Offset in feet (east, north, up) at track origin. Added to offset derived from config or OurAirports.'
     )
     parser.add_argument('-D', '--offsetDest', default=None, dest='offsetDest', metavar='EAST,NORTH,UP',
-        help='Offset in feet (east, north, up) at track destination; same as -O but for the last track point.'
+        help='Offset in feet (east, north, up) at track destination. Same as -O but for the last track point.'
     )
 
     parser.add_argument('trackfile', default=None, nargs='+', help='Path to one or more ForeFlight compatible track files (CSV, KML)')
@@ -1610,7 +1623,7 @@ def main(argv:List[str]):
     for inPath in args.trackfile:
         inPath = os.path.expanduser(inPath)
         trackFile = open(inPath, 'r')
-        fdrFlight = parseInputFile(config, trackFile)
+        fdrFlight = parseTrackFile(config, trackFile)
 
         if fdrFlight is not None:
             fdrFlight.buildTrackPoints(config)
@@ -1629,9 +1642,9 @@ def getOutpath(config:Config, inPath:str, fdrFlight:FdrFlight):
     return Path(os.path.join(outPath, filename)).with_suffix('.fdr')
 
 
-def parseInputFile(config:Config, trackFile:TextIO) -> Optional[FdrFlight]:
+def parseTrackFile(config:Config, trackFile:TextIO) -> Optional[FdrFlight]:
     try:
-        filetype = getFiletype(trackFile)
+        filetype = detectFileType(trackFile)
 
         if filetype == FileType.CSV:
             return parseCsvFile(config, trackFile)
@@ -1646,7 +1659,7 @@ def parseInputFile(config:Config, trackFile:TextIO) -> Optional[FdrFlight]:
             trackFile.close()
 
 
-def getFiletype(file:TextIO) -> FileType:
+def detectFileType(file:TextIO) -> FileType:
     filetype = FileType.UNKNOWN
     startingPos = file.tell()
 
@@ -1676,7 +1689,7 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
     metaCols = readCsvRow(csvReader)
     if metaCols is None:
         raise ValueError('CSV file is missing the metadata header row')
-    metaCols.remove('Battery State') # Bug in ForeFlight
+    metaCols.remove('Battery State') # ForeFlight exports this without a matching value
 
     # Read the metadata values row
     metaVals = readCsvRow(csvReader)
@@ -1688,7 +1701,7 @@ def parseCsvFile(config:Config, trackFile:TextIO) -> FdrFlight:
     for colName in metaData:
         colValue = metaData[colName]
         if colName == 'Tail Number':
-            flightMeta.TailNumber = colValue;
+            flightMeta.TailNumber = colValue
             fdrFlight.TAIL = colValue
         elif colName == 'Derived Origin':
             flightMeta.DerivedOrigin = colValue
@@ -1881,7 +1894,7 @@ def greatCircleDistanceNm(lat1Deg: float, lon1Deg: float, lat2Deg: float, lon2De
     return earthRadiusNm * c
 
 
-def timezoneOffsetSeconds(s: str) -> float:
+def timezoneOffsetInSeconds(s: str) -> float:
     """Offset from local time to Zulu, in seconds (added to timestamps).
 
     Accepts decimal hours (e.g. ``3``, ``-5.5``) or ``+/-hh:mm[:ss]`` as in the README.
