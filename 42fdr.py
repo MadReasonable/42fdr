@@ -1554,7 +1554,7 @@ COMM,                      Longitude,            Latitude,              AltMSL, 
 
         for point in self.track:
             outLat, outLong, outAltMSL = point.renderPosition()
-            time    = point.TIME.strftime('%H:%M:%S.%f')
+            time    = point.TIME.strftime('%H:%M:%S.%f')[:-4]
             long    = str.rjust(str(self._roundLatLong(outLong)), FdrColumnWidth)
             lat     = str.rjust(str(self._roundLatLong(outLat)), FdrColumnWidth)
             altMSL  = str.rjust(str(self._roundAltitude(outAltMSL)), FdrColumnWidth)
