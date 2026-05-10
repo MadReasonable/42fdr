@@ -16,6 +16,10 @@ class ConfigError(ValueError):
     """Invalid user configuration (``42fdr.conf`` or command-line). Fatal in ``__main__``."""
 
 
+class AircraftConfigError(ConfigError):
+    """Invalid aircraft/tail-specific configuration encountered while processing a track file."""
+
+
 class FileType(Enum):
     UNKNOWN = 0
     CSV = 1
@@ -201,6 +205,8 @@ class Config():
             self.outPath = os.path.expanduser(cliArgs.outputFolder)
         elif 'outpath' in defaults:
             self.outPath = os.path.expanduser(defaults['outpath'])
+        if not os.path.isdir(self.outPath):
+            raise ConfigError(f"Output folder does not exist: {self.outPath}")
 
         self.airfieldDefaultVisitRadiusNm = self.AIRFIELD_DEFAULT_VISIT_RADIUS_NM
         self.airfieldTypeVisitRadiusNm = dict(self.AIRFIELD_TYPE_VISIT_RADIUS_NM)
@@ -247,7 +253,7 @@ class Config():
                     if resolved in self.AIRFIELD_TYPES_BY_AIRCRAFT:
                         return resolved
                     allowed = ', '.join(sorted(self.AIRFIELD_TYPES_BY_AIRCRAFT))
-                    raise ConfigError(
+                    raise AircraftConfigError(
                         f"Unknown AircraftType {resolved!r} in [{section}]. Expected one of: {allowed}."
                     )
         return self.aircraftType
@@ -272,7 +278,7 @@ class Config():
 
         def parseDrefEntry(key: str, val: str) -> Tuple[str, str, str, Optional[str]]:
             if not key.lower().startswith('dref '):
-                raise ConfigError(f"Invalid DREF key (must start with 'DREF '): {key}")
+                raise AircraftConfigError(f"Invalid DREF key (must start with 'DREF '): {key}")
 
             instrument = key[5:].strip().replace('\\', '/')
 
@@ -284,13 +290,13 @@ class Config():
                 elif char == ')':
                     depth -= 1
                     if depth < 0:
-                        raise ConfigError(f"Unmatched closing parenthesis in DREF expression: {val}")
+                        raise AircraftConfigError(f"Unmatched closing parenthesis in DREF expression: {val}")
                 elif char == ',' and depth == 0:
                     exprEnd = i
                     break
 
             if depth != 0:
-                raise ConfigError(f"Unmatched parenthesis in DREF expression: {val}")
+                raise AircraftConfigError(f"Unmatched parenthesis in DREF expression: {val}")
 
             if exprEnd is not None:
                 expr = val[:exprEnd].strip()
@@ -1620,19 +1626,48 @@ def main(argv:List[str]):
     args = parser.parse_args(argv[1:])
     
     config = Config(args)
+    hadAircraftConfigErrors = False
+    hadFileNotFoundErrors = False
+    hadInvalidInputErrors = False
+    hadUnexpectedErrors = False
     for inPath in args.trackfile:
-        inPath = os.path.expanduser(inPath)
-        trackFile = open(inPath, 'r')
-        fdrFlight = parseTrackFile(config, trackFile)
+        print(f"{inPath} ->", end="")
+        try:
+            inPath = os.path.expanduser(inPath)
+            trackFile = open(inPath, 'r')
+            fdrFlight = parseTrackFile(config, trackFile)
 
-        if fdrFlight is not None:
-            fdrFlight.buildTrackPoints(config)
-            fdrFlight.deriveMissingMetaData()
-            outPath = getOutpath(config, inPath, fdrFlight)
-            with open(outPath, 'w') as fdrFile:
-                fdrFlight.writeFdrFile(config, fdrFile)
-        else:
-            print(f"No flight data found in {inPath}")
+            if fdrFlight is not None:
+                fdrFlight.buildTrackPoints(config)
+                fdrFlight.deriveMissingMetaData()
+                outPath = getOutpath(config, inPath, fdrFlight)
+                with open(outPath, 'w') as fdrFile:
+                    fdrFlight.writeFdrFile(config, fdrFile)
+                outputFilename = os.path.basename(outPath)
+                print(f" {outputFilename}")
+            else:
+                print(f" No flight data found in {inPath}")
+        except FileNotFoundError as e:
+            hadFileNotFoundErrors = True
+            print(f" [Error] File not found: {e.filename}")
+        except AircraftConfigError as e:
+            hadAircraftConfigErrors = True
+            print(f" [Error] Invalid aircraft configuration: {e}")
+        except ValueError as e:
+            hadInvalidInputErrors = True
+            print(f" [Error] Invalid input: {e}")
+        except Exception as e:
+            hadUnexpectedErrors = True
+            print(f" [Unexpected Error] {e}")
+
+    if hadUnexpectedErrors:
+        return 1
+    if hadFileNotFoundErrors:
+        return 4
+    if hadAircraftConfigErrors:
+        return 3
+    if hadInvalidInputErrors:
+        return 5
     return 0
 
 
@@ -1780,6 +1815,16 @@ def readCsvRow(csvFile) -> Optional[List[str]]:
 
 
 def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
+    def normalizeTimestamp(raw: str) -> datetime:
+        normalized = raw.strip().replace("Z", "+00:00")
+        # Python accepts up to 6 fractional digits. Some ForeFlight exports include nanoseconds.
+        withFractionMatch = re.match(r"^(.*?)(\.\d+)([+-]\d{2}:\d{2})$", normalized)
+        if withFractionMatch is not None:
+            prefix, fraction, tzSuffix = withFractionMatch.groups()
+            if len(fraction) > 7:
+                normalized = f"{prefix}{fraction[:7]}{tzSuffix}"
+        return datetime.fromisoformat(normalized)
+
     ns = {
         "kml": "http://www.opengis.net/kml/2.2",
         "gx": "http://www.google.com/kml/ext/2.2"
@@ -1834,7 +1879,7 @@ def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
     if track is None:
         raise ValueError("gx:Track missing inside placemark")
 
-    times = [datetime.fromisoformat((when.text or "").replace("Z", "+00:00"))
+    times = [normalizeTimestamp(when.text or "")
              for when in track.findall("kml:when", ns)]
     coords = [list(map(float, (c.text or "").strip().split()))
               for c in track.findall("gx:coord", ns)]
@@ -1958,14 +2003,8 @@ def toHM(time:Union[datetime,int,str]):
 if __name__ == '__main__':
     try:
         sys.exit(main(sys.argv))
-    except FileNotFoundError as e:
-        print(f"[Error] File not found: {e.filename}")
-        sys.exit(3)
     except ConfigError as e:
         print(f"[Error] Invalid configuration: {e}")
-        sys.exit(2)
-    except ValueError as e:
-        print(f"[Error] Invalid input: {e}")
         sys.exit(2)
     except Exception as e:
         print(f"[Unexpected Error] {e}")
