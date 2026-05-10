@@ -1815,6 +1815,16 @@ def readCsvRow(csvFile) -> Optional[List[str]]:
 
 
 def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
+    def normalizeTimestamp(raw: str) -> datetime:
+        normalized = raw.strip().replace("Z", "+00:00")
+        # Python accepts up to 6 fractional digits. Some ForeFlight exports include nanoseconds.
+        withFractionMatch = re.match(r"^(.*?)(\.\d+)([+-]\d{2}:\d{2})$", normalized)
+        if withFractionMatch is not None:
+            prefix, fraction, tzSuffix = withFractionMatch.groups()
+            if len(fraction) > 7:
+                normalized = f"{prefix}{fraction[:7]}{tzSuffix}"
+        return datetime.fromisoformat(normalized)
+
     ns = {
         "kml": "http://www.opengis.net/kml/2.2",
         "gx": "http://www.google.com/kml/ext/2.2"
@@ -1869,7 +1879,7 @@ def parseKmlFile(config: Config, trackFile: TextIO) -> FdrFlight:
     if track is None:
         raise ValueError("gx:Track missing inside placemark")
 
-    times = [datetime.fromisoformat((when.text or "").replace("Z", "+00:00"))
+    times = [normalizeTimestamp(when.text or "")
              for when in track.findall("kml:when", ns)]
     coords = [list(map(float, (c.text or "").strip().split()))
               for c in track.findall("gx:coord", ns)]
