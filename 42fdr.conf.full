@@ -1,10 +1,11 @@
 [Defaults]
 Aircraft     = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
 AircraftType = airplane ; airplane | helicopter | balloon
-Timezone     = 5        ; CSV files record times in Local Time
-TimezoneKML  = 0        ; KML files record times in UTC
+;Timezone     = 0        ; Default for both CSV and KML if not specified separately
+TimezoneCSV  = 5        ; CSV files record times in Local Time
+;TimezoneKML  = 0        ; KML files record times in UTC
 ;OutPath      = .
-;inferRoute
+;inferRoute   = true     ; Infer route from GPS data if not provided in trackfile metadata
 
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round({Speed}, 4), 1.0, IAS
 DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 4), 1.0, Altimeter
@@ -22,21 +23,24 @@ DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, B
 
 
 [Tail N123ND]
-headingTrim = 0.0
+headingTrim = 7.0
 pitchTrim   = 0.0
 rollTrim    = 0.0
 
+; Tail-level DREF overrides the same DREF from Defaults/Aircraft for this registration.
+; Same panel/instrument, but this tail's IAS is known to read high in real logs.
+DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round(({Speed} * 1.03) + 1.5, 4), 1.0, IAS
+
+
 ; Legacy tail sections are still supported:
-;[N123ND]
-;headingTrim = 0.0
-;pitchTrim   = 0.0
-;rollTrim    = 0.0
+[N123ND]
+headingTrim = 12.0
 
 
 [AirfieldDB]
-;enabled = false
+enabled = true
 MaxAgeDays = 120
-;Path = ./OurAirports.csv
+;Path = ~/OurAirports.csv
 ;DefaultVisitRadius = 1.0
 ;LargeAirportVisitRadius = 2.0
 ;MediumAirportVisitRadius = 1.0
@@ -46,25 +50,26 @@ MaxAgeDays = 120
 ;BalloonportVisitRadius = 0.25
 
 
-[Waypoint KBED]
-offset = 0.0, 0.0, -5.0
-lat = 42.470001
-lon = -71.289001
-
-
-; innerRadiusNm and outerRadiusNm will default to 2NM and 6NM if not supplied
-[Waypoint KBOS]
-offset = 0.0, 0.0, -5.5
-lat = 42.361970
-lon = -71.007900
-innerRadiusNm = 2.5
-outerRadiusNm = 6.5
-
-
-; When AirfieldDB is enabled (or when --airfieldDB / --airfieldDBPath is used),
+; When AirfieldDB is enabled above, or using CLI options --airfieldDB / --airfieldDBPath,
 ; lat/lon can be omitted and resolved automatically
+[Waypoint KBED]
+offset = 0.0, 0.0, -20.0
+
+
+; Override default innerRadiusNm and outerRadiusNm of 2NM and 6NM
+[Waypoint KBOS]
+offset = 0.0, 0.0, -15.0
+innerRadiusNm = 1.30
+outerRadiusNm = 5.30
+
+
+; This entry works even if AirfieldDB is disabled because lat/lon are supplied
 [Waypoint KORH]
-offset = 0.0, 0.0, 3
+offset = 0.0, 0.0, -20.0
+innerRadiusNm = 1.0
+outerRadiusNm = 5.0
+lat = 42.267300
+lon = -71.875702
 
 
 ; Use hideFromRoute = true to keep a waypoint out of the derived route summary

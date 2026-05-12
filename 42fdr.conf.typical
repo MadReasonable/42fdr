@@ -1,0 +1,41 @@
+[Defaults]
+Aircraft     = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
+TimezoneCSV  = 5        ; CSV files record times in Local Time
+inferRoute   = true
+
+DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round({Speed}, 4), 1.0, IAS
+DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 4), 1.0, Altimeter
+DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = round({HEADING}, 3), 1.0, Compass
+
+
+[Aircraft/AeroSphere Piper Warrior/PiperWarrior/PiperWarrior.acf]
+Tails = N123ND, N321ND
+
+DREF sim/cockpit2/gauges/indicators/heading_vacuum_deg_mag_pilot = round({HEADING}, 3), 1.0, Vacuum Heading
+DREF sim/cockpit2/gauges/indicators/pitch_vacuum_deg_pilot = round({PITCH}, 3), 1.0, Vacuum Pitch
+DREF sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = round({ROLL}, 3), 1.0, Vacuum Roll
+DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, Barometer
+
+
+[Tail N123ND]
+headingTrim = 7.0
+pitchTrim   = 0.0
+rollTrim    = 0.0
+
+
+[AirfieldDB]
+enabled = true
+MaxAgeDays = 120
+
+
+; When AirfieldDB is enabled (or when --airfieldDB / --airfieldDBPath is used),
+; lat/lon can be omitted and resolved automatically
+[Waypoint KBED]
+offset = 0.0, 0.0, -20.0
+
+
+; Use hideFromRoute = true to keep a waypoint out of the derived route summary
+; Include offset if you still want track correction
+[Waypoint 8MA4]
+hideFromRoute = true
+;offset = 0, 0, -5
