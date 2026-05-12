@@ -33,7 +33,7 @@ DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round(({Speed} * 1.03) 
 
 
 ; Legacy tail sections are still supported:
-[N123ND]
+[N321ND]
 headingTrim = 12.0
 
 
