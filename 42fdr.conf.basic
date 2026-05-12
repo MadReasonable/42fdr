@@ -1,0 +1,12 @@
+[Defaults]
+Aircraft     = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
+TimezoneCSV  = 5        ; CSV files record times in Local Time
+inferRoute   = true     ; Infer route from GPS data if not provided in trackfile metadata
+
+DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round({Speed}, 4), 1.0, IAS
+DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 4), 1.0, Altimeter
+DREF sim/cockpit2/gauges/indicators/compass_heading_deg_mag = round({HEADING}, 3), 1.0, Compass
+
+
+[Aircraft/AeroSphere Piper Warrior/PiperWarrior/PiperWarrior.acf]
+Tails = N123ND, N321ND
