@@ -19,14 +19,18 @@ If that doesn't work or the version is older than 3.9, download and install the 
 - Go to: [https://github.com/MadReasonable/42fdr/releases](https://github.com/MadReasonable/42fdr/releases)
 - Download the latest release in your preferred format (`zip`, `tar.gz`)
 
-**2. Extract to a working folder**  
-Recommended location:
+**2. Extract the contents to a working folder**  
+Windows:
 
-```text
-C:\Users\<yourname>\42fdr
+```cmd
+%USERPROFILE%\42fdr
 ```
+*(e.g. C:\\Users\\\<yourname>\\42fdr)*
 
-You can rename the folder to just `42fdr`.
+macOS/Linux:
+```bash
+~/.local/42fdr
+```
 
 **3. (Optional) Add to your PATH**  
 To make `42fdr.py` accessible from any folder:
@@ -56,7 +60,7 @@ python 42fdr.py tracklog.csv
 **With aircraft and timezone:**
 
 ```bash
-python 42fdr.py tracklog.csv --aircraft "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" --timezone 5
+python 42fdr.py tracklog.kml --aircraft "Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf" --timezone 5
 ```
 
 **With config file:**
@@ -98,7 +102,9 @@ You can also specify a custom config path using `--config`.
 | --- | --- |
 | `[Defaults]` | Defaults for command-line arguments (e.g., aircraft path, timezone) |
 | `[Aircraft/*]` | Automatically selects aircraft based on tail number |
-| `[Tail#]` | Trim/correct AHRS data for a specific aircraft |
+| `[Tail <Tail#>]` | Trim/correct AHRS data for a specific aircraft |
+| `[AirfieldDB]` | Enables and configures OurAirports.com database lookup and filtering behavior |
+| `[Waypoint <Name>]` | Offset/correct replay positions around airports (fix floating during taxi) |
 
 ## DREF Support
 
@@ -107,14 +113,17 @@ DREFs allow you to define additional cockpit instruments like airspeed, altitude
 
 42fdr supports flexible DREF mapping globally, by aircraft, or by tail number.
 
+## Waypoints and Offsets
+
+Use waypoint offsets to fix replay ground contact at specific airports (for example, if the airplane floats during taxi).
+
+
 **Example config:**
 
 ```ini
 [Defaults]
 Aircraft    = Aircraft/Laminar Research/Cessna 172 SP/Cessna_172SP.acf
-Timezone    = 5
-TimezoneKML = 0
-OutPath     = .
+TimezoneCSV = 5
 
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round({Speed}, 4), 1.0, IAS
 DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 4), 1.0, Altimeter
@@ -129,7 +138,17 @@ DREF sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = round({ROLL}, 3), 1.
 DREF sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot = 29.92, 1.0, Barometer
 
 [Tail N123ND]
-headingTrim = 0.03
-pitchTrim   = -0.01
+headingTrim = 7.0
+pitchTrim   = 0.0
 rollTrim    = 0.0
+
+[AirfieldDB]
+enabled = true
+MaxAgeDays = 90
+
+[Waypoint KBED]
+offset = 0.0, 0.0, -20.0
+
+[Waypoint 8MA4]
+hideFromRoute = true
 ```
