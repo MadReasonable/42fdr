@@ -103,6 +103,8 @@ macOS/Linux:
 42fdr supports both CSV and KML files, but CSV are preferred as they provide more metadata in a smaller, simpler file.
 Either format will produce equally valid FDR files.
 
+Export tracklog files from ForeFlight using the official [ForeFlight Track Log Export Guide](https://support.foreflight.com/hc/en-us/articles/27632618331927-How-can-a-Track-Log-be-exported).
+
 
 | Options | Description |
 |---------|-------------|
@@ -117,6 +119,15 @@ Either format will produce equally valid FDR files.
 | `-O`    | Offset in feet at the **origin** airfield: `east,north,up` (e.g. `"2,0,-15.5"`). See below.
 | `-D`    | Same for the **destination** airfield. See below.
 <br/>
+
+### Importing into X-Plane
+---
+From the main menu:
+1. Select **Load Saved Flight**
+2. Select **Open Saved Flight Not Listed**
+3. Navigate to the folder where you saved the `.fdr` file(s)
+4. Select an `.fdr` file to replay
+
 
 ### Offsets: Fixing Hovering During Taxi
 ---
