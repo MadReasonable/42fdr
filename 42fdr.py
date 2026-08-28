@@ -167,6 +167,12 @@ class Config():
 
     def __init__(self, cliArgs:argparse.Namespace):
         self.file = configparser.RawConfigParser(inline_comment_prefixes=(';'), allow_no_value=True)
+        # X-Plane datarefs are case-sensitive (e.g. heading_AHARS_deg_mag_pilot),
+        # but ConfigParser lower-cases option keys by default, which mangles the
+        # dataref embedded in a "DREF <dataref>" key. Preserve case for the
+        # dataref portion of DREF keys while lower-casing all other keys so the
+        # rest of the config lookups are unaffected.
+        self.file.optionxform = Config._optionxform
         configFile = self._findConfigFile(cliArgs.config)
         if configFile:
             self.file.read(configFile)
@@ -911,6 +917,20 @@ class Config():
             return CardinalOffset.fromString(offsetRaw)
         except ValueError as err:
             raise ConfigError(f"{label} has invalid {key}: {err}") from None
+
+
+    @staticmethod
+    def _optionxform(key: str) -> str:
+        """ConfigParser key normalizer that keeps DREF dataref names case-sensitive.
+
+        Everything is lower-cased (ConfigParser's default) except the dataref
+        that follows a leading ``DREF ``; X-Plane dataref paths are case-sensitive
+        (e.g. ``heading_AHARS_deg_mag_pilot``), so that portion is preserved. The
+        ``DREF`` prefix itself is normalized so downstream matching still works.
+        """
+        if key[:5].lower() == 'dref ':
+            return 'DREF ' + key[5:]
+        return key.lower()
 
 
     @staticmethod

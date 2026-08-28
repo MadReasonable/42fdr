@@ -1272,5 +1272,32 @@ class InferAttitudeTests(unittest.TestCase):
         self.assertGreater(settled.PITCH, 2.5)                  # AoA + positive pitch trim
 
 
+class DrefCaseSensitivityTests(unittest.TestCase):
+    def test_dref_dataref_case_is_preserved(self) -> None:
+        # X-Plane datarefs are case-sensitive; a mixed-case dataref must survive.
+        cfg_path = _write_temp_config(
+            """
+            [Defaults]
+            DREF sim/cockpit2/gauges/indicators/heading_AHARS_deg_mag_pilot = round({HEADING}, 3), 1.0, HSI
+            """
+        )
+        config = _42fdr.Config(_make_cli_args(cfg_path))
+        _sources, defines = config.drefsByTail("N000ZZ")
+        joined = "\n".join(defines)
+        self.assertIn("heading_AHARS_deg_mag_pilot", joined)
+        self.assertNotIn("heading_ahars_deg_mag_pilot", joined)
+
+    def test_non_dref_keys_still_lowercased(self) -> None:
+        # Guard the optionxform change: a mixed-case ordinary key must still resolve.
+        cfg_path = _write_temp_config(
+            """
+            [Defaults]
+            InferAttitude = true
+            """
+        )
+        config = _42fdr.Config(_make_cli_args(cfg_path))
+        self.assertTrue(config.enableAttitude)
+
+
 if __name__ == "__main__":
     unittest.main()
