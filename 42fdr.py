@@ -114,6 +114,7 @@ class Config():
     airfieldDbPath: Optional[Path] = None
     airfieldDbEnabled: bool = False
     enableRouting: bool = False
+    enableAttitude: bool = False
     airfieldDbMaxAgeDays: float = 90.0
     airfieldGridCellNm: float = 120.0
     airfieldDefaultVisitRadiusNm: float
@@ -217,6 +218,11 @@ class Config():
             self.enableRouting = True
         else:
             self.enableRouting = self._parseEnableFlag(defaults, 'inferRoute')
+
+        if cliArgs.inferAttitude:
+            self.enableAttitude = True
+        else:
+            self.enableAttitude = self._parseEnableFlag(defaults, 'inferAttitude')
 
         self.waypoints = self._loadWaypoints()
         if cliArgs.offsetOrig:
@@ -1391,6 +1397,142 @@ class FdrFlight():
         meta.DerivedRoute = derivedRoute if config.enableRouting else None
 
 
+    # --- Attitude synthesis (inferAttitude) -------------------------------
+    # ForeFlight and similar logs carry GPS position + ground track but often
+    # no AHRS attitude, so pitch/roll arrive as zeros and the aircraft replays
+    # dead level through every climb and turn. When enabled, deriveAttitude
+    # reconstructs believable pitch and roll from the track itself.
+    _ATT_G_FPS2 = 32.174            # gravity, ft/s^2
+    _ATT_KT_TO_FPS = 1.68781        # knots -> ft/s
+    _ATT_GS_MIN_KT = 20.0           # below this, treat as on-ground: stay level
+    _ATT_SMOOTH_INPUT = 5           # half-window for altitude/heading smoothing
+    _ATT_SMOOTH_OUTPUT = 2          # half-window for pitch/roll smoothing
+    _ATT_AOA_CRUISE_DEG = 2.0       # deck-angle offset eased in with speed
+    _ATT_AOA_RAMP_KT = 40.0         # speed over GS_MIN across which AoA eases in
+    _ATT_PITCH_MIN_DEG = -15.0
+    _ATT_PITCH_MAX_DEG = 15.0
+    _ATT_BANK_MAX_DEG = 40.0
+    _ATT_PITCH_RATE_LIM = 4.0       # deg/s cap on pitch change
+    _ATT_ROLL_RATE_LIM = 6.0        # deg/s cap on roll change
+    _ATT_SOURCE_PRESENT_DEG = 1.0   # source |pitch|/|roll| above this = real data
+
+    def deriveAttitude(self, config: Config) -> None:
+        if not config.enableAttitude or len(self.track) < 3:
+            return
+
+        # Don't clobber logs that already carry genuine AHRS attitude. Inspect
+        # the raw source values (before trims) rather than the built points.
+        maxSourceAttitude = 0.0
+        for trackData in self.trackData:
+            maxSourceAttitude = max(
+                maxSourceAttitude,
+                abs(float(trackData.get('Pitch', 0.0))),
+                abs(float(trackData.get('Bank', 0.0))),
+            )
+        if maxSourceAttitude > self._ATT_SOURCE_PRESENT_DEG:
+            Config._warnConfig(
+                "inferAttitude: source track already contains pitch/roll data; "
+                "leaving attitude unchanged."
+            )
+            return
+
+        tailConfig = config.tailConfigFor(self.TAIL)
+        pitchTrim = tailConfig['pitchtrim']
+        rollTrim = tailConfig['rolltrim']
+
+        seconds = [p.TIME.timestamp() for p in self.track]
+        altitude = [p.ALTMSL for p in self.track]
+        groundSpeed = [float(td.get('Speed', 0.0)) for td in self.trackData]
+        headingUnwrapped = self._unwrapDegrees([p.HEADING for p in self.track])
+
+        altitudeSmoothed = self._movingAverage(altitude, self._ATT_SMOOTH_INPUT)
+        headingSmoothed = self._movingAverage(headingUnwrapped, self._ATT_SMOOTH_INPUT)
+
+        verticalSpeed = self._centralDifference(altitudeSmoothed, seconds)   # ft/s
+        turnRate = self._centralDifference(headingSmoothed, seconds)         # deg/s
+
+        pitch: List[float] = []
+        roll: List[float] = []
+        for i in range(len(self.track)):
+            speedFps = groundSpeed[i] * self._ATT_KT_TO_FPS
+            if groundSpeed[i] < self._ATT_GS_MIN_KT:
+                pitch.append(0.0)
+                roll.append(0.0)
+                continue
+            flightPathAngle = math.degrees(math.atan2(verticalSpeed[i], speedFps))
+            aoa = self._ATT_AOA_CRUISE_DEG * min(
+                1.0, (groundSpeed[i] - self._ATT_GS_MIN_KT) / self._ATT_AOA_RAMP_KT
+            )
+            p = max(self._ATT_PITCH_MIN_DEG, min(self._ATT_PITCH_MAX_DEG, flightPathAngle + aoa))
+            b = math.degrees(math.atan((speedFps * math.radians(turnRate[i])) / self._ATT_G_FPS2))
+            b = max(-self._ATT_BANK_MAX_DEG, min(self._ATT_BANK_MAX_DEG, b))
+            pitch.append(p)
+            roll.append(b)
+
+        pitch = self._rateLimit(self._movingAverage(pitch, self._ATT_SMOOTH_OUTPUT), seconds, self._ATT_PITCH_RATE_LIM)
+        roll = self._rateLimit(self._movingAverage(roll, self._ATT_SMOOTH_OUTPUT), seconds, self._ATT_ROLL_RATE_LIM)
+
+        for i, point in enumerate(self.track):
+            point.PITCH = wrapAttitude(pitch[i] + pitchTrim)
+            point.ROLL = wrapAttitude(roll[i] + rollTrim)
+
+
+    @staticmethod
+    def _unwrapDegrees(values: List[float]) -> List[float]:
+        """Turn a wrapping 0..360 series into a continuous one (no 359->0 jumps)."""
+        if not values:
+            return []
+        out = [values[0]]
+        for value in values[1:]:
+            delta = value - (out[-1] % 360.0)
+            if delta > 180.0:
+                delta -= 360.0
+            elif delta < -180.0:
+                delta += 360.0
+            out.append(out[-1] + delta)
+        return out
+
+
+    @staticmethod
+    def _movingAverage(values: List[float], halfWindow: int) -> List[float]:
+        n = len(values)
+        out = [0.0] * n
+        for i in range(n):
+            lo = max(0, i - halfWindow)
+            hi = min(n, i + halfWindow + 1)
+            out[i] = sum(values[lo:hi]) / (hi - lo)
+        return out
+
+
+    @staticmethod
+    def _centralDifference(values: List[float], times: List[float]) -> List[float]:
+        n = len(values)
+        out = [0.0] * n
+        for i in range(n):
+            if i == 0:
+                lo, hi = 0, 1
+            elif i == n - 1:
+                lo, hi = n - 2, n - 1
+            else:
+                lo, hi = i - 1, i + 1
+            dt = times[hi] - times[lo]
+            out[i] = (values[hi] - values[lo]) / dt if dt else 0.0
+        return out
+
+
+    @staticmethod
+    def _rateLimit(values: List[float], times: List[float], limitPerSec: float) -> List[float]:
+        if not values:
+            return []
+        out = [values[0]]
+        for i in range(1, len(values)):
+            dt = max(times[i] - times[i - 1], 1e-6)
+            maxStep = limitPerSec * dt
+            step = max(-maxStep, min(maxStep, values[i] - out[-1]))
+            out.append(out[-1] + step)
+        return out
+
+
     @staticmethod
     def _nearestWaypointCode(
         lattitude: float,
@@ -1609,6 +1751,7 @@ def _buildArgParser() -> argparse.ArgumentParser:
     parser.add_argument(      '--airfieldDB',   default=None,  dest='airfieldDB', action='store_const', const='', help='Enable local airfield lookup using OurAirports data (default OurAirports.csv path).')
     parser.add_argument(      '--airfieldDBPath',              dest='airfieldDB', metavar='PATH',                 help='Enable local airfield lookup using OurAirports data from a specific CSV file or directory.')
     parser.add_argument(      '--inferRoute',   default=False, action='store_true',                               help='Infer and include derived route metadata from visited waypoints.')
+    parser.add_argument(      '--inferAttitude',default=False, action='store_true',                               help='Synthesize pitch and roll from the GPS track when the source log has none (e.g. no AHRS).')
 
     parser.add_argument('-O', '--offsetOrig', default=None, dest='offsetOrig', metavar='EAST,NORTH,UP',
         help='Offset in feet (east, north, up) at track origin. Added to offset derived from config or OurAirports.'
@@ -1639,6 +1782,7 @@ def main(argv:List[str]):
 
             if fdrFlight is not None:
                 fdrFlight.buildTrackPoints(config)
+                fdrFlight.deriveAttitude(config)
                 fdrFlight.deriveMissingMetaData()
                 outPath = getOutpath(config, inPath, fdrFlight)
                 with open(outPath, 'w') as fdrFile:

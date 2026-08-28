@@ -6,6 +6,7 @@ TimezoneCSV  = 5        ; CSV files record times in Local Time
 ;TimezoneKML  = 0        ; KML files record times in UTC
 ;OutPath      = .
 ;inferRoute   = true     ; Infer route from GPS data if not provided in trackfile metadata
+;inferAttitude = true    ; Synthesize pitch/roll from the GPS track when the log has no attitude (e.g. no AHRS)
 
 DREF sim/cockpit2/gauges/indicators/airspeed_kts_pilot = round({Speed}, 4), 1.0, IAS
 DREF sim/cockpit2/gauges/indicators/altitude_ft_pilot = round({ALTMSL}, 4), 1.0, Altimeter
