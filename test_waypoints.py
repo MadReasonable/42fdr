@@ -1178,7 +1178,8 @@ class InferAttitudeTests(unittest.TestCase):
                 pitch=src_pitch[i], roll=src_roll[i],
             ))
             flight.trackData.append(
-                {"Speed": speeds[i], "Pitch": src_pitch[i], "Bank": src_roll[i]}
+                {"Timestamp": 1_000_000 + i, "Speed": speeds[i],
+                 "Pitch": src_pitch[i], "Bank": src_roll[i]}
             )
         return flight
 
@@ -1270,6 +1271,32 @@ class InferAttitudeTests(unittest.TestCase):
         # Level flight -> synthesized pitch is the AoA offset (~2 deg) + pitch trim.
         self.assertAlmostEqual(settled.ROLL, -2.0, delta=0.5)   # roll trim on ~0 bank
         self.assertGreater(settled.PITCH, 2.5)                  # AoA + positive pitch trim
+
+
+    def test_drefs_capture_synthesized_attitude(self) -> None:
+        # A {PITCH}/{ROLL} DREF (e.g. the vacuum gauges) must reflect the
+        # synthesized attitude, i.e. DREFs are evaluated after deriveAttitude.
+        cfg_path = _write_temp_config(
+            """
+            [Defaults]
+            DREF sim/cockpit2/gauges/indicators/pitch_vacuum_deg_pilot = round({PITCH}, 3), 1.0, VacPitch
+            DREF sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = round({ROLL}, 3), 1.0, VacRoll
+            """
+        )
+        config = _42fdr.Config(_make_cli_args(cfg_path, infer_attitude=True))
+        n = 40
+        headings = [90.0 + 3.0 * i for i in range(n)]
+        altitudes = [3000.0 + 10.0 * i for i in range(n)]
+        speeds = [100.0] * n
+        flight = self._flight(headings, altitudes, speeds)
+        flight.deriveAttitude(config)
+        flight.applyDrefs(config)
+
+        point = flight.track[35]
+        self.assertGreater(point.PITCH, 1.0)      # sanity: attitude was synthesized
+        self.assertGreater(point.ROLL, 5.0)
+        self.assertAlmostEqual(point.drefs["VacPitch"], round(point.PITCH, 3), places=3)
+        self.assertAlmostEqual(point.drefs["VacRoll"], round(point.ROLL, 3), places=3)
 
 
 class DrefCaseSensitivityTests(unittest.TestCase):

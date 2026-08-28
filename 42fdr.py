@@ -1364,7 +1364,6 @@ class FdrFlight():
     def buildTrackPoints(self, config: Config) -> None:
         meta = self.metaData or FlightMeta()
         tailConfig = config.tailConfigFor(self.TAIL)
-        drefSources, _ = config.drefsByTail(self.TAIL)
         boundingBoxes = self._buildBoundingBoxes(config.airfieldGridCellNm)
         waypoints = config.waypointsForFlight(self, boundingBoxes)
         offsetHelper = config.offsetHelperFrom(waypoints)
@@ -1392,7 +1391,6 @@ class FdrFlight():
                 pitch     = wrapAttitude(float(trackData['Pitch']) + tailConfig['pitchtrim']),
                 roll      = wrapAttitude(float(trackData['Bank']) + tailConfig['rolltrim'])
             )
-            point.addDrefs(drefSources, meta, trackData)
 
             offset = offsetHelper.offsetForPosition(point.LAT, point.LONG)
             if offset is not None:
@@ -1417,6 +1415,19 @@ class FdrFlight():
         meta.DerivedRoute = derivedRoute if config.enableRouting else None
 
 
+    def applyDrefs(self, config: Config) -> None:
+        """Evaluate configured DREF expressions for every track point.
+
+        Runs as its own pass, after deriveAttitude, so DREFs that reference
+        {PITCH} / {ROLL} (e.g. the vacuum attitude gauges in the sample configs)
+        capture the synthesized attitude rather than the pre-synthesis values.
+        """
+        meta = self.metaData or FlightMeta()
+        drefSources, _ = config.drefsByTail(self.TAIL)
+        for point, trackData in zip(self.track, self.trackData):
+            point.addDrefs(drefSources, meta, trackData)
+
+
     # --- Attitude synthesis (inferAttitude) -------------------------------
     # ForeFlight and similar logs carry GPS position + ground track but often
     # no AHRS attitude, so pitch/roll arrive as zeros and the aircraft replays
@@ -1425,8 +1436,8 @@ class FdrFlight():
     _ATT_G_FPS2 = 32.174            # gravity, ft/s^2
     _ATT_KT_TO_FPS = 1.68781        # knots -> ft/s
     _ATT_GS_MIN_KT = 20.0           # below this, treat as on-ground: stay level
-    _ATT_SMOOTH_INPUT = 5           # half-window for altitude/heading smoothing
-    _ATT_SMOOTH_OUTPUT = 2          # half-window for pitch/roll smoothing
+    _ATT_SMOOTH_INPUT_SEC = 5.0     # smoothing half-window for altitude/heading, seconds
+    _ATT_SMOOTH_OUTPUT_SEC = 2.0    # smoothing half-window for pitch/roll, seconds
     _ATT_AOA_CRUISE_DEG = 2.0       # deck-angle offset eased in with speed
     _ATT_AOA_RAMP_KT = 40.0         # speed over GS_MIN across which AoA eases in
     _ATT_PITCH_MIN_DEG = -15.0
@@ -1438,6 +1449,10 @@ class FdrFlight():
 
     def deriveAttitude(self, config: Config) -> None:
         if not config.enableAttitude or len(self.track) < 3:
+            return
+        # track and trackData are built in lockstep; bail rather than risk
+        # silently pairing a point with the wrong sample's groundspeed/time.
+        if len(self.trackData) != len(self.track):
             return
 
         # Don't clobber logs that already carry genuine AHRS attitude. Inspect
@@ -1460,13 +1475,28 @@ class FdrFlight():
         pitchTrim = tailConfig['pitchtrim']
         rollTrim = tailConfig['rolltrim']
 
-        seconds = [p.TIME.timestamp() for p in self.track]
-        altitude = [p.ALTMSL for p in self.track]
-        groundSpeed = [float(td.get('Speed', 0.0)) for td in self.trackData]
-        headingUnwrapped = self._unwrapDegrees([p.HEADING for p in self.track])
+        # Gather aligned series in a single pass over the paired lists. Time comes
+        # from the source epoch (monotonic, timezone-independent) rather than the
+        # rendered naive datetime, whose .timestamp() shifts across DST.
+        seconds: List[float] = []
+        altitude: List[float] = []
+        heading: List[float] = []
+        groundSpeed: List[float] = []
+        for point, trackData in zip(self.track, self.trackData):
+            seconds.append(float(trackData['Timestamp']))
+            altitude.append(point.ALTMSL)
+            heading.append(point.HEADING)
+            groundSpeed.append(float(trackData.get('Speed', 0.0)))
+        headingUnwrapped = self._unwrapDegrees(heading)
 
-        altitudeSmoothed = self._movingAverage(altitude, self._ATT_SMOOTH_INPUT)
-        headingSmoothed = self._movingAverage(headingUnwrapped, self._ATT_SMOOTH_INPUT)
+        # Smoothing spans a fixed number of seconds, converted to a sample
+        # half-window from the track's actual rate, so results don't depend on
+        # whether the log is 1 Hz, 5 s, or 10 Hz.
+        inputHalf = self._smoothingHalfWindow(seconds, self._ATT_SMOOTH_INPUT_SEC)
+        outputHalf = self._smoothingHalfWindow(seconds, self._ATT_SMOOTH_OUTPUT_SEC)
+
+        altitudeSmoothed = self._movingAverage(altitude, inputHalf)
+        headingSmoothed = self._movingAverage(headingUnwrapped, inputHalf)
 
         verticalSpeed = self._centralDifference(altitudeSmoothed, seconds)   # ft/s
         turnRate = self._centralDifference(headingSmoothed, seconds)         # deg/s
@@ -1489,8 +1519,8 @@ class FdrFlight():
             pitch.append(p)
             roll.append(b)
 
-        pitch = self._rateLimit(self._movingAverage(pitch, self._ATT_SMOOTH_OUTPUT), seconds, self._ATT_PITCH_RATE_LIM)
-        roll = self._rateLimit(self._movingAverage(roll, self._ATT_SMOOTH_OUTPUT), seconds, self._ATT_ROLL_RATE_LIM)
+        pitch = self._rateLimit(self._movingAverage(pitch, outputHalf), seconds, self._ATT_PITCH_RATE_LIM)
+        roll = self._rateLimit(self._movingAverage(roll, outputHalf), seconds, self._ATT_ROLL_RATE_LIM)
 
         for i, point in enumerate(self.track):
             point.PITCH = wrapAttitude(pitch[i] + pitchTrim)
@@ -1514,13 +1544,38 @@ class FdrFlight():
 
 
     @staticmethod
+    def _smoothingHalfWindow(seconds: List[float], windowSeconds: float) -> int:
+        """Convert a smoothing window in seconds to a sample half-window.
+
+        Uses the median sample interval so the effective smoothing time is the
+        same regardless of the log's sample rate. Falls back to 1 when the
+        cadence can't be determined.
+        """
+        diffs = sorted(
+            seconds[i + 1] - seconds[i]
+            for i in range(len(seconds) - 1)
+            if seconds[i + 1] > seconds[i]
+        )
+        if not diffs:
+            return 1
+        medianDt = diffs[len(diffs) // 2]
+        if medianDt <= 0:
+            return 1
+        return max(1, round(windowSeconds / medianDt))
+
+
+    @staticmethod
     def _movingAverage(values: List[float], halfWindow: int) -> List[float]:
+        # Prefix sums keep this O(n) rather than O(n * window).
         n = len(values)
+        prefix = [0.0] * (n + 1)
+        for i, v in enumerate(values):
+            prefix[i + 1] = prefix[i] + v
         out = [0.0] * n
         for i in range(n):
             lo = max(0, i - halfWindow)
             hi = min(n, i + halfWindow + 1)
-            out[i] = sum(values[lo:hi]) / (hi - lo)
+            out[i] = (prefix[hi] - prefix[lo]) / (hi - lo)
         return out
 
 
@@ -1803,6 +1858,7 @@ def main(argv:List[str]):
             if fdrFlight is not None:
                 fdrFlight.buildTrackPoints(config)
                 fdrFlight.deriveAttitude(config)
+                fdrFlight.applyDrefs(config)
                 fdrFlight.deriveMissingMetaData()
                 outPath = getOutpath(config, inPath, fdrFlight)
                 with open(outPath, 'w') as fdrFile:
