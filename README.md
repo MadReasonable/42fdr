@@ -88,12 +88,12 @@ https://www.python.org/downloads/
 ## Usage
 Windows (via *42fdr.bat* in PATH):
 ```cmd
-42fdr [-c configFile] [-a aircraft] [-t aircraftType] [-z timezone] [-o outputFolder] [--airfieldDB] [--airfieldDBPath path] [--inferRoute] [-O offsetOrig] [-D offsetDest] trackFile1 [trackFile2 ...]
+42fdr [-c configFile] [-a aircraft] [-t aircraftType] [-z timezone] [-o outputFolder] [--airfieldDB] [--airfieldDBPath path] [--inferRoute] [--inferAttitude] [-O offsetOrig] [-D offsetDest] trackFile1 [trackFile2 ...]
 ```
 
 macOS/Linux:
 ```bash
-42fdr.py [-c configFile] [-a aircraft] [-t aircraftType] [-z timezone] [-o outputFolder] [--airfieldDB] [--airfieldDBPath path] [--inferRoute] [-O offsetOrig] [-D offsetDest] trackFile1 [trackFile2 ...]
+42fdr.py [-c configFile] [-a aircraft] [-t aircraftType] [-z timezone] [-o outputFolder] [--airfieldDB] [--airfieldDBPath path] [--inferRoute] [--inferAttitude] [-O offsetOrig] [-D offsetDest] trackFile1 [trackFile2 ...]
 ```
 
 > **Breaking changes:** `-t` now selects `--aircraftType` and the timezone short flag has moved to `-z`.
@@ -116,6 +116,7 @@ Export tracklog files from ForeFlight using the official [ForeFlight Track Log E
 | `--airfieldDB` | Enable airfield lookup from OurAirports data using the default `OurAirports.csv` path in the 42fdr.py script folder. Downloads CSV if missing or out of date.
 | `--airfieldDBPath` | Enable airfield lookup using a specific OurAirports CSV file or a directory that contains `OurAirports.csv`.
 | `--inferRoute` | Infer actual route from waypoints defined in config and the airfield DB (if enabled).
+| `--inferAttitude` | Synthesize pitch and roll from the GPS track for logs that have no attitude data (e.g. ForeFlight Web exports, or logs recorded without AHRS). Skipped automatically when the source already contains real attitude.
 | `-O`    | Offset in feet at the **origin** airfield: `east,north,up` (e.g. `"2,0,-15.5"`). See below.
 | `-D`    | Same for the **destination** airfield. See below.
 <br/>
@@ -158,6 +159,23 @@ Exact weighting appears under `[Waypoint <Name>] Sections` and airport offset bl
 `42fdr` writes flight metadata to comments in the FDR files it generates.
 ForeFlight CSV files include planned route waypoints, which may not match the actual flight.
 Waypoints from the config file and from the OurAirports airfield database can be used to infer the actual route flown.
+
+##### Inferred Attitude
+ForeFlight track logs record GPS position and ground track, but many (for example ForeFlight Web
+exports, or flights recorded without an AHRS) carry no pitch or roll, so the aircraft replays
+dead level through every climb and turn. With `--inferAttitude` (or `inferAttitude = true` in the
+config), `42fdr` reconstructs believable attitude from the track itself:
+
+- **Pitch** from the flight-path angle (climb/descent rate vs. groundspeed) plus a small
+  angle-of-attack offset that eases in with speed.
+- **Roll** from the rate of turn, using the coordinated-turn relationship
+  `bank = atan(V * turn_rate / g)`.
+
+Altitude and heading are smoothed before differentiation, and the resulting angles are smoothed
+and rate-limited, so the motion looks natural instead of twitching on GPS noise. Points on the
+ground (below ~20 kt groundspeed) are kept level. As a safeguard, if the source log already
+contains real pitch/roll, attitude is left untouched and a notice is printed. `pitchTrim` and
+`rollTrim` calibrations still apply on top of the synthesized values.
 
 #### From the Command-Line
 **`-O`** and **`-D`** allow you to specify offsets for the origin and destination airfields from the command line.
@@ -266,6 +284,7 @@ The `[Defaults]` section defines fallback values used when command-line options 
 - `aircraft` – default X-Plane aircraft path
 - `AircraftType` – default aircraft category for OurAirports filtering when using `--airfieldDB`: `airplane` (default), `helicopter`, or `balloon`. Overridden by `-t` on the command line. See the **[AirfieldDB]** section for how categories map to airfield types.
 - `inferRoute` – Whether to derive the flight route from configured waypoints and the OurAirports database (`--airfieldDB`). Off unless you add the key, set `inferRoute = true`, or pass `--inferRoute`.
+- `inferAttitude` – Whether to synthesize pitch and roll from the GPS track when the source log has none. Off unless you add the key, set `inferAttitude = true`, or pass `--inferAttitude`.
 - `timezone` – default timezone offset
 - `outpath` – default folder for generated `.fdr` files
 

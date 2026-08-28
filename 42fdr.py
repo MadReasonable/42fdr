@@ -114,6 +114,7 @@ class Config():
     airfieldDbPath: Optional[Path] = None
     airfieldDbEnabled: bool = False
     enableRouting: bool = False
+    enableAttitude: bool = False
     airfieldDbMaxAgeDays: float = 90.0
     airfieldGridCellNm: float = 120.0
     airfieldDefaultVisitRadiusNm: float
@@ -166,6 +167,12 @@ class Config():
 
     def __init__(self, cliArgs:argparse.Namespace):
         self.file = configparser.RawConfigParser(inline_comment_prefixes=(';'), allow_no_value=True)
+        # X-Plane datarefs are case-sensitive (e.g. heading_AHARS_deg_mag_pilot),
+        # but ConfigParser lower-cases option keys by default, which mangles the
+        # dataref embedded in a "DREF <dataref>" key. Preserve case for the
+        # dataref portion of DREF keys while lower-casing all other keys so the
+        # rest of the config lookups are unaffected.
+        self.file.optionxform = Config._optionxform
         configFile = self._findConfigFile(cliArgs.config)
         if configFile:
             self.file.read(configFile)
@@ -217,6 +224,11 @@ class Config():
             self.enableRouting = True
         else:
             self.enableRouting = self._parseEnableFlag(defaults, 'inferRoute')
+
+        if cliArgs.inferAttitude:
+            self.enableAttitude = True
+        else:
+            self.enableAttitude = self._parseEnableFlag(defaults, 'inferAttitude')
 
         self.waypoints = self._loadWaypoints()
         if cliArgs.offsetOrig:
@@ -908,6 +920,20 @@ class Config():
 
 
     @staticmethod
+    def _optionxform(key: str) -> str:
+        """ConfigParser key normalizer that keeps DREF dataref names case-sensitive.
+
+        Everything is lower-cased (ConfigParser's default) except the dataref
+        that follows a leading ``DREF ``; X-Plane dataref paths are case-sensitive
+        (e.g. ``heading_AHARS_deg_mag_pilot``), so that portion is preserved. The
+        ``DREF`` prefix itself is normalized so downstream matching still works.
+        """
+        if key[:5].lower() == 'dref ':
+            return 'DREF ' + key[5:]
+        return key.lower()
+
+
+    @staticmethod
     def _parseEnableFlag(section: Any, key: str) -> bool:
         """Parse a boolean in the form True/Yes/1/On or False/No/0/Off. A bare key with no value is true."""
         normalKey = key.lower()
@@ -1338,7 +1364,6 @@ class FdrFlight():
     def buildTrackPoints(self, config: Config) -> None:
         meta = self.metaData or FlightMeta()
         tailConfig = config.tailConfigFor(self.TAIL)
-        drefSources, _ = config.drefsByTail(self.TAIL)
         boundingBoxes = self._buildBoundingBoxes(config.airfieldGridCellNm)
         waypoints = config.waypointsForFlight(self, boundingBoxes)
         offsetHelper = config.offsetHelperFrom(waypoints)
@@ -1366,7 +1391,6 @@ class FdrFlight():
                 pitch     = wrapAttitude(float(trackData['Pitch']) + tailConfig['pitchtrim']),
                 roll      = wrapAttitude(float(trackData['Bank']) + tailConfig['rolltrim'])
             )
-            point.addDrefs(drefSources, meta, trackData)
 
             offset = offsetHelper.offsetForPosition(point.LAT, point.LONG)
             if offset is not None:
@@ -1389,6 +1413,199 @@ class FdrFlight():
                 derivedRoute.append(nearestCode)
 
         meta.DerivedRoute = derivedRoute if config.enableRouting else None
+
+
+    def applyDrefs(self, config: Config) -> None:
+        """Evaluate configured DREF expressions for every track point.
+
+        Runs as its own pass, after deriveAttitude, so DREFs that reference
+        {PITCH} / {ROLL} (e.g. the vacuum attitude gauges in the sample configs)
+        capture the synthesized attitude rather than the pre-synthesis values.
+        """
+        meta = self.metaData or FlightMeta()
+        drefSources, _ = config.drefsByTail(self.TAIL)
+        for point, trackData in zip(self.track, self.trackData):
+            point.addDrefs(drefSources, meta, trackData)
+
+
+    # --- Attitude synthesis (inferAttitude) -------------------------------
+    # ForeFlight and similar logs carry GPS position + ground track but often
+    # no AHRS attitude, so pitch/roll arrive as zeros and the aircraft replays
+    # dead level through every climb and turn. When enabled, deriveAttitude
+    # reconstructs believable pitch and roll from the track itself.
+    _ATT_G_FPS2 = 32.174            # gravity, ft/s^2
+    _ATT_KT_TO_FPS = 1.68781        # knots -> ft/s
+    _ATT_GS_MIN_KT = 20.0           # below this, treat as on-ground: stay level
+    _ATT_SMOOTH_INPUT_SEC = 5.0     # smoothing half-window for altitude/heading, seconds
+    _ATT_SMOOTH_OUTPUT_SEC = 2.0    # smoothing half-window for pitch/roll, seconds
+    _ATT_AOA_CRUISE_DEG = 2.0       # deck-angle offset eased in with speed
+    _ATT_AOA_RAMP_KT = 40.0         # speed over GS_MIN across which AoA eases in
+    _ATT_PITCH_MIN_DEG = -15.0
+    _ATT_PITCH_MAX_DEG = 15.0
+    _ATT_BANK_MAX_DEG = 40.0
+    _ATT_PITCH_RATE_LIM = 4.0       # deg/s cap on pitch change
+    _ATT_ROLL_RATE_LIM = 6.0        # deg/s cap on roll change
+    _ATT_SOURCE_PRESENT_DEG = 1.0   # source |pitch|/|roll| above this = real data
+
+    def deriveAttitude(self, config: Config) -> None:
+        if not config.enableAttitude or len(self.track) < 3:
+            return
+        # track and trackData are built in lockstep; bail rather than risk
+        # silently pairing a point with the wrong sample's groundspeed/time.
+        if len(self.trackData) != len(self.track):
+            return
+
+        # Don't clobber logs that already carry genuine AHRS attitude. Inspect
+        # the raw source values (before trims) rather than the built points.
+        maxSourceAttitude = 0.0
+        for trackData in self.trackData:
+            maxSourceAttitude = max(
+                maxSourceAttitude,
+                abs(float(trackData.get('Pitch', 0.0))),
+                abs(float(trackData.get('Bank', 0.0))),
+            )
+        if maxSourceAttitude > self._ATT_SOURCE_PRESENT_DEG:
+            Config._warnConfig(
+                "inferAttitude: source track already contains pitch/roll data; "
+                "leaving attitude unchanged."
+            )
+            return
+
+        tailConfig = config.tailConfigFor(self.TAIL)
+        pitchTrim = tailConfig['pitchtrim']
+        rollTrim = tailConfig['rolltrim']
+
+        # Gather aligned series in a single pass over the paired lists. Time comes
+        # from the source epoch (monotonic, timezone-independent) rather than the
+        # rendered naive datetime, whose .timestamp() shifts across DST.
+        seconds: List[float] = []
+        altitude: List[float] = []
+        heading: List[float] = []
+        groundSpeed: List[float] = []
+        for point, trackData in zip(self.track, self.trackData):
+            seconds.append(float(trackData['Timestamp']))
+            altitude.append(point.ALTMSL)
+            heading.append(point.HEADING)
+            groundSpeed.append(float(trackData.get('Speed', 0.0)))
+        headingUnwrapped = self._unwrapDegrees(heading)
+
+        # Smoothing spans a fixed number of seconds, converted to a sample
+        # half-window from the track's actual rate, so results don't depend on
+        # whether the log is 1 Hz, 5 s, or 10 Hz.
+        inputHalf = self._smoothingHalfWindow(seconds, self._ATT_SMOOTH_INPUT_SEC)
+        outputHalf = self._smoothingHalfWindow(seconds, self._ATT_SMOOTH_OUTPUT_SEC)
+
+        altitudeSmoothed = self._movingAverage(altitude, inputHalf)
+        headingSmoothed = self._movingAverage(headingUnwrapped, inputHalf)
+
+        verticalSpeed = self._centralDifference(altitudeSmoothed, seconds)   # ft/s
+        turnRate = self._centralDifference(headingSmoothed, seconds)         # deg/s
+
+        pitch: List[float] = []
+        roll: List[float] = []
+        for i in range(len(self.track)):
+            speedFps = groundSpeed[i] * self._ATT_KT_TO_FPS
+            if groundSpeed[i] < self._ATT_GS_MIN_KT:
+                pitch.append(0.0)
+                roll.append(0.0)
+                continue
+            flightPathAngle = math.degrees(math.atan2(verticalSpeed[i], speedFps))
+            aoa = self._ATT_AOA_CRUISE_DEG * min(
+                1.0, (groundSpeed[i] - self._ATT_GS_MIN_KT) / self._ATT_AOA_RAMP_KT
+            )
+            p = max(self._ATT_PITCH_MIN_DEG, min(self._ATT_PITCH_MAX_DEG, flightPathAngle + aoa))
+            b = math.degrees(math.atan((speedFps * math.radians(turnRate[i])) / self._ATT_G_FPS2))
+            b = max(-self._ATT_BANK_MAX_DEG, min(self._ATT_BANK_MAX_DEG, b))
+            pitch.append(p)
+            roll.append(b)
+
+        pitch = self._rateLimit(self._movingAverage(pitch, outputHalf), seconds, self._ATT_PITCH_RATE_LIM)
+        roll = self._rateLimit(self._movingAverage(roll, outputHalf), seconds, self._ATT_ROLL_RATE_LIM)
+
+        for i, point in enumerate(self.track):
+            point.PITCH = wrapAttitude(pitch[i] + pitchTrim)
+            point.ROLL = wrapAttitude(roll[i] + rollTrim)
+
+
+    @staticmethod
+    def _unwrapDegrees(values: List[float]) -> List[float]:
+        """Turn a wrapping 0..360 series into a continuous one (no 359->0 jumps)."""
+        if not values:
+            return []
+        out = [values[0]]
+        for value in values[1:]:
+            delta = value - (out[-1] % 360.0)
+            if delta > 180.0:
+                delta -= 360.0
+            elif delta < -180.0:
+                delta += 360.0
+            out.append(out[-1] + delta)
+        return out
+
+
+    @staticmethod
+    def _smoothingHalfWindow(seconds: List[float], windowSeconds: float) -> int:
+        """Convert a smoothing window in seconds to a sample half-window.
+
+        Uses the median sample interval so the effective smoothing time is the
+        same regardless of the log's sample rate. Falls back to 1 when the
+        cadence can't be determined.
+        """
+        diffs = sorted(
+            seconds[i + 1] - seconds[i]
+            for i in range(len(seconds) - 1)
+            if seconds[i + 1] > seconds[i]
+        )
+        if not diffs:
+            return 1
+        medianDt = diffs[len(diffs) // 2]
+        if medianDt <= 0:
+            return 1
+        return max(1, round(windowSeconds / medianDt))
+
+
+    @staticmethod
+    def _movingAverage(values: List[float], halfWindow: int) -> List[float]:
+        # Prefix sums keep this O(n) rather than O(n * window).
+        n = len(values)
+        prefix = [0.0] * (n + 1)
+        for i, v in enumerate(values):
+            prefix[i + 1] = prefix[i] + v
+        out = [0.0] * n
+        for i in range(n):
+            lo = max(0, i - halfWindow)
+            hi = min(n, i + halfWindow + 1)
+            out[i] = (prefix[hi] - prefix[lo]) / (hi - lo)
+        return out
+
+
+    @staticmethod
+    def _centralDifference(values: List[float], times: List[float]) -> List[float]:
+        n = len(values)
+        out = [0.0] * n
+        for i in range(n):
+            if i == 0:
+                lo, hi = 0, 1
+            elif i == n - 1:
+                lo, hi = n - 2, n - 1
+            else:
+                lo, hi = i - 1, i + 1
+            dt = times[hi] - times[lo]
+            out[i] = (values[hi] - values[lo]) / dt if dt else 0.0
+        return out
+
+
+    @staticmethod
+    def _rateLimit(values: List[float], times: List[float], limitPerSec: float) -> List[float]:
+        if not values:
+            return []
+        out = [values[0]]
+        for i in range(1, len(values)):
+            dt = max(times[i] - times[i - 1], 1e-6)
+            maxStep = limitPerSec * dt
+            step = max(-maxStep, min(maxStep, values[i] - out[-1]))
+            out.append(out[-1] + step)
+        return out
 
 
     @staticmethod
@@ -1609,6 +1826,7 @@ def _buildArgParser() -> argparse.ArgumentParser:
     parser.add_argument(      '--airfieldDB',   default=None,  dest='airfieldDB', action='store_const', const='', help='Enable local airfield lookup using OurAirports data (default OurAirports.csv path).')
     parser.add_argument(      '--airfieldDBPath',              dest='airfieldDB', metavar='PATH',                 help='Enable local airfield lookup using OurAirports data from a specific CSV file or directory.')
     parser.add_argument(      '--inferRoute',   default=False, action='store_true',                               help='Infer and include derived route metadata from visited waypoints.')
+    parser.add_argument(      '--inferAttitude',default=False, action='store_true',                               help='Synthesize pitch and roll from the GPS track when the source log has none (e.g. no AHRS).')
 
     parser.add_argument('-O', '--offsetOrig', default=None, dest='offsetOrig', metavar='EAST,NORTH,UP',
         help='Offset in feet (east, north, up) at track origin. Added to offset derived from config or OurAirports.'
@@ -1639,6 +1857,8 @@ def main(argv:List[str]):
 
             if fdrFlight is not None:
                 fdrFlight.buildTrackPoints(config)
+                fdrFlight.deriveAttitude(config)
+                fdrFlight.applyDrefs(config)
                 fdrFlight.deriveMissingMetaData()
                 outPath = getOutpath(config, inPath, fdrFlight)
                 with open(outPath, 'w') as fdrFile:

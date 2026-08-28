@@ -29,6 +29,7 @@ def _make_cli_args(
     airfield_db: Optional[str] = None,
     aircraft_type: Optional[str] = None,
     infer_route: bool = False,
+    infer_attitude: bool = False,
 ) -> types.SimpleNamespace:
     return types.SimpleNamespace(
         aircraft=None,
@@ -40,6 +41,7 @@ def _make_cli_args(
         offsetDest=offset_dest,
         airfieldDB=airfield_db,
         inferRoute=infer_route,
+        inferAttitude=infer_attitude,
     )
 
 
@@ -1154,6 +1156,174 @@ class FlightBoundingBoxTests(unittest.TestCase):
         ]
         boundingBoxes = flight._buildBoundingBoxes(100.0)
         self.assertGreaterEqual(len(boundingBoxes), 3)
+
+
+class InferAttitudeTests(unittest.TestCase):
+    def _config(self, infer_attitude: bool = True) -> "types.SimpleNamespace":
+        cfg_path = _write_temp_config("[Defaults]\n")
+        return _42fdr.Config(_make_cli_args(cfg_path, infer_attitude=infer_attitude))
+
+    def _flight(self, headings, altitudes, speeds, tail="N000ZZ",
+                src_pitch=None, src_roll=None):
+        flight = _42fdr.FdrFlight()
+        flight.TAIL = tail
+        n = len(headings)
+        src_pitch = src_pitch if src_pitch is not None else [0.0] * n
+        src_roll = src_roll if src_roll is not None else [0.0] * n
+        for i in range(n):
+            time = _42fdr.datetime.fromtimestamp(1_000_000 + i)  # 1 Hz samples
+            flight.track.append(_42fdr.FdrTrackPoint(
+                time=time, latitude=42.0, longitude=-71.0,
+                altitude=altitudes[i], heading=headings[i],
+                pitch=src_pitch[i], roll=src_roll[i],
+            ))
+            flight.trackData.append(
+                {"Timestamp": 1_000_000 + i, "Speed": speeds[i],
+                 "Pitch": src_pitch[i], "Bank": src_roll[i]}
+            )
+        return flight
+
+    def test_climbing_right_turn_gives_nose_up_and_right_bank(self) -> None:
+        n = 40
+        headings = [90.0 + 3.0 * i for i in range(n)]      # steady right turn, 3 deg/s
+        altitudes = [3000.0 + 10.0 * i for i in range(n)]  # ~600 fpm climb
+        speeds = [100.0] * n
+        flight = self._flight(headings, altitudes, speeds)
+        flight.deriveAttitude(self._config())
+
+        settled = flight.track[35]
+        self.assertGreater(settled.PITCH, 1.0)                 # nose up in the climb
+        self.assertGreater(settled.ROLL, 5.0)                  # right wing down in a right turn
+        # Coordinated-turn bank at 100 kt / 3 deg-per-sec is ~15 deg.
+        self.assertTrue(8.0 < settled.ROLL < 22.0)
+
+    def test_descending_left_turn_gives_nose_down_and_left_bank(self) -> None:
+        n = 40
+        headings = [200.0 - 3.0 * i for i in range(n)]      # steady left turn
+        altitudes = [5000.0 - 20.0 * i for i in range(n)]   # ~1200 fpm descent
+        speeds = [110.0] * n
+        flight = self._flight(headings, altitudes, speeds)
+        flight.deriveAttitude(self._config())
+
+        settled = flight.track[35]
+        self.assertLess(settled.PITCH, 0.0)                    # nose down in the descent
+        self.assertLess(settled.ROLL, -5.0)                    # left wing down in a left turn
+
+    def test_ground_points_stay_level(self) -> None:
+        n = 20
+        headings = [90.0 + 5.0 * i for i in range(n)]       # heading swings while taxiing
+        altitudes = [1000.0] * n
+        speeds = [8.0] * n                                   # below the on-ground threshold
+        flight = self._flight(headings, altitudes, speeds)
+        flight.deriveAttitude(self._config())
+
+        for point in flight.track:
+            self.assertEqual(point.PITCH, 0.0)
+            self.assertEqual(point.ROLL, 0.0)
+
+    def test_existing_source_attitude_is_preserved(self) -> None:
+        n = 30
+        headings = [90.0 + 3.0 * i for i in range(n)]
+        altitudes = [3000.0 + 10.0 * i for i in range(n)]
+        speeds = [100.0] * n
+        src_roll = [15.0] * n                               # real AHRS bank present
+        flight = self._flight(headings, altitudes, speeds, src_roll=src_roll)
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            flight.deriveAttitude(self._config())
+
+        self.assertIn("inferAttitude", stderr.getvalue())    # warned about skipping
+        for point in flight.track:
+            self.assertEqual(point.ROLL, 15.0)               # left untouched
+
+    def test_disabled_leaves_attitude_untouched(self) -> None:
+        n = 30
+        headings = [90.0 + 3.0 * i for i in range(n)]
+        altitudes = [3000.0 + 10.0 * i for i in range(n)]
+        speeds = [100.0] * n
+        flight = self._flight(headings, altitudes, speeds)
+        flight.deriveAttitude(self._config(infer_attitude=False))
+
+        for point in flight.track:
+            self.assertEqual(point.PITCH, 0.0)
+            self.assertEqual(point.ROLL, 0.0)
+
+    def test_trims_are_applied_to_synthesized_attitude(self) -> None:
+        cfg_path = _write_temp_config(
+            """
+            [Defaults]
+
+            [Tail N000ZZ]
+            pitchTrim = 1.5
+            rollTrim  = -2.0
+            """
+        )
+        config = _42fdr.Config(_make_cli_args(cfg_path, infer_attitude=True))
+        n = 30
+        headings = [90.0] * n                               # wings level, straight
+        altitudes = [3000.0] * n                            # level flight
+        speeds = [100.0] * n
+        flight = self._flight(headings, altitudes, speeds)
+        flight.deriveAttitude(config)
+
+        settled = flight.track[20]
+        # Level flight -> synthesized pitch is the AoA offset (~2 deg) + pitch trim.
+        self.assertAlmostEqual(settled.ROLL, -2.0, delta=0.5)   # roll trim on ~0 bank
+        self.assertGreater(settled.PITCH, 2.5)                  # AoA + positive pitch trim
+
+
+    def test_drefs_capture_synthesized_attitude(self) -> None:
+        # A {PITCH}/{ROLL} DREF (e.g. the vacuum gauges) must reflect the
+        # synthesized attitude, i.e. DREFs are evaluated after deriveAttitude.
+        cfg_path = _write_temp_config(
+            """
+            [Defaults]
+            DREF sim/cockpit2/gauges/indicators/pitch_vacuum_deg_pilot = round({PITCH}, 3), 1.0, VacPitch
+            DREF sim/cockpit2/gauges/indicators/roll_vacuum_deg_pilot = round({ROLL}, 3), 1.0, VacRoll
+            """
+        )
+        config = _42fdr.Config(_make_cli_args(cfg_path, infer_attitude=True))
+        n = 40
+        headings = [90.0 + 3.0 * i for i in range(n)]
+        altitudes = [3000.0 + 10.0 * i for i in range(n)]
+        speeds = [100.0] * n
+        flight = self._flight(headings, altitudes, speeds)
+        flight.deriveAttitude(config)
+        flight.applyDrefs(config)
+
+        point = flight.track[35]
+        self.assertGreater(point.PITCH, 1.0)      # sanity: attitude was synthesized
+        self.assertGreater(point.ROLL, 5.0)
+        self.assertAlmostEqual(point.drefs["VacPitch"], round(point.PITCH, 3), places=3)
+        self.assertAlmostEqual(point.drefs["VacRoll"], round(point.ROLL, 3), places=3)
+
+
+class DrefCaseSensitivityTests(unittest.TestCase):
+    def test_dref_dataref_case_is_preserved(self) -> None:
+        # X-Plane datarefs are case-sensitive; a mixed-case dataref must survive.
+        cfg_path = _write_temp_config(
+            """
+            [Defaults]
+            DREF sim/cockpit2/gauges/indicators/heading_AHARS_deg_mag_pilot = round({HEADING}, 3), 1.0, HSI
+            """
+        )
+        config = _42fdr.Config(_make_cli_args(cfg_path))
+        _sources, defines = config.drefsByTail("N000ZZ")
+        joined = "\n".join(defines)
+        self.assertIn("heading_AHARS_deg_mag_pilot", joined)
+        self.assertNotIn("heading_ahars_deg_mag_pilot", joined)
+
+    def test_non_dref_keys_still_lowercased(self) -> None:
+        # Guard the optionxform change: a mixed-case ordinary key must still resolve.
+        cfg_path = _write_temp_config(
+            """
+            [Defaults]
+            InferAttitude = true
+            """
+        )
+        config = _42fdr.Config(_make_cli_args(cfg_path))
+        self.assertTrue(config.enableAttitude)
 
 
 if __name__ == "__main__":
